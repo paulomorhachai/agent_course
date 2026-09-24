@@ -1,0 +1,277 @@
+# タイトル案：LLMエージェント自作講座 第4回 — ファイルという身体の獲得
+
+## 前回の復習
+第3回まではエージェントにループを回し、道具を持たせ、どの道具を選ばせるかを学んできました。前回の最後は、エージェントに複数の道具を提示し、状況に応じて適切なものを選ばせるところまででした。今回は、その選択肢に「ファイルの読み書き」を加えます。ファイル操作は、エージェントにとって作業の痕跡を残し、状態を保持するための基本的な身体となります。道具の選択ロジックは第3回と同様の `for` ループで回しています。
+
+## ファイルに書くという身体
+エージェントにとってファイルがないと、その場限りの会話しか残りせず、作業がリセットされてしまいます。過去の結果を引き継げず、同じ質問を繰り返すことになりかねません。ファイルに書くことは、エージェントに「記憶」の機能を与え、作業の継続性を生みます。跡が残らない困りごとは、やり取りが記憶されず、せっかくの成果が次の機会に生かせない点です。そのためにも、エージェントに作業フォルダ内でのファイル操作をさせ、その結果を次の入力にフィードバックする仕組みが必要です。
+
+## 道具を3つ足す（ループは変わらない）
+以下は、第4回のエージェント完成品です。ループ構造は第3回と全く同じで、 `for _ in range(MAX_ROUNDS)` １行も書き換えていません。新たに加わったのは `list_files` `read_file` `write_file` の3つの道具実装と、それらを記述する `TOOLS_SPEC` です。コードは素材1からそのまま貼り付けています。
+
+```python
+"""第4回: 完成品 — ファイルを読み書きできるエージェント（作業フォルダの中だけ）
+
+使い方:  python3 04_file_agent.py "メモ帳に今日の予定を3つ書いて"
+
+第3回との差は道具だけ。ループは1行も変わっていない。
+新しいのは「道具が外の世界を書き換える」ことと、その範囲を縛る仕組み。
+"""
+import json
+import os
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 8
+
+# エージェントに与える身体の範囲。ここから外へは手が届かない
+WORKDIR = Path(__file__).resolve().parent / "workspace"
+WORKDIR.mkdir(exist_ok=True)
+
+# ---------- 身体の範囲を決める関門 ----------
+
+def safe_path(name):
+    """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+    ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+    resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+    シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+    """
+    target = (WORKDIR / name).resolve()
+    if not target.is_relative_to(WORKDIR):
+        raise ValueError(f"作業フォルダの外は触れません: {name}")
+    return target
+
+
+# ---------- 道具の実装（厨房） ----------
+
+def list_files():
+    names = sorted(p.name for p in WORKDIR.iterdir() if p.is_file())
+    return "\n".join(names) if names else "（空です）"
+
+
+def read_file(name):
+    path = safe_path(name)
+    if not path.exists():
+        return f"エラー: {name} はありません"
+    return path.read_text(encoding="utf-8")
+
+
+def write_file(name, content):
+    path = safe_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return f"{name} に {len(content)} 文字を書きました"
+
+
+TOOLS_IMPL = {"list_files": list_files, "read_file": read_file, "write_file": write_file}
+
+# ---------- 道具の説明書（メニュー） ----------
+
+TOOLS_SPEC = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "作業フォルダにあるファイル名の一覧を返す",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "作業フォルダのファイルを読んで中身を返す",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"}
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "作業フォルダのファイルに書き込む。既にあれば上書きする",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"},
+                    "content": {"type": "string", "description": "書き込む本文"},
+                },
+                "required": ["name", "content"],
+            },
+        },
+    },
+]
+
+# ---------- エージェント本体（第3回と同じ） ----------
+
+def chat(messages):
+    payload = {"model": MODEL, "messages": messages,
+               "tools": TOOLS_SPEC, "stream": False}
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+# 「お願い」で守る層。環境変数で差し替えられるようにしてあるのは、
+# これを外すと何が起きるかを第4回で実際に見るため
+SYSTEM = os.environ.get(
+    "AGENT_SYSTEM",
+    "あなたはファイル操作ができるアシスタントです。作業フォルダの中だけで作業してください。",
+)
+
+
+def run_agent(user_input):
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": user_input},
+    ]
+    for _ in range(MAX_ROUNDS):
+        msg = chat(messages)
+        messages.append(msg)
+        if not msg.get("tool_calls"):
+            return msg["content"]
+        for call in msg["tool_calls"]:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            print(f"[ツール実行] {name}({args})")
+            try:
+                result = TOOLS_IMPL[name](**args)
+            except Exception as e:
+                result = f"エラー: {e}"
+            print(f"[結果] {result}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り：ツール使用が上限に達しました）"
+
+
+if __name__ == "__main__":
+    question = sys.argv[1] if len(sys.argv) > 1 else "作業フォルダに何がある？"
+    print("最終回答:", run_agent(question))
+```
+
+## 関門：身体の範囲を決める
+ファイル読み書きの道具が揃ったところで、次に必要なのは「どこまでさせるか」という範囲の設計です。素材1から `safe_path` を貼ります。この関数は、エージェントに与える作業フォルダの範囲をチェックし、その外へのアクセスをブロックします。ポイントは `resolve()` を先に呼ぶことです。 `"../../etc/passwd"` のように文字列のまま `"../"` を弾く方式だと、シンボリックリンクや `"a/../../b"` のような書き方で抜けられてしまいます。`resolve()` を呼んでから相対性をチェックすることで、論理的に外へ出ようとしても実体がWORKDIRの外なら検知できます。
+
+```python
+def safe_path(name):
+    """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+    ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+    resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+    シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+    """
+    target = (WORKDIR / name).resolve()
+    if not target.is_relative_to(WORKDIR):
+        raise ValueError(f"作業フォルダの外は触れません: {name}")
+    return target
+```
+
+素材2の単体テスト結果は以下の通りです。すべてのテストケースで期待通りの動作となりました。
+
+```
+== 素材2の単体テスト結果 ==
+  通すべき 'memo.txt'                   → 通った
+  通すべき 'notes/today.txt'            → 通った
+  通すべき './memo.txt'                 → 通った
+  通すべき 'a/../memo.txt'              → 通った
+  弾くべき '../secret.txt'              → 落ちた
+  弾くべき '../../etc/passwd'           → 落ちた
+  弾くべき '/etc/passwd'                → 落ちた
+  弾くべき 'notes/../../outside.txt'    → 落ちた
+
+全8件 合格
+```
+
+## 実験：エージェントを走らせる
+素材3から実験1・2・3のログをそのまま貼ります。それぞれ何が起きたかを分解して説明します。
+
+=== 実験1: 道具の下見（空のフォルダ） ===
+=== $ python3 04_file_agent.py "作業フォルダに何がある？"
+[ツール実行] list_files({})
+[結果] （空です）
+最終回答: 作業フォルダは空です。
+
+【分解】エージェントはまず `list_files` 道具を呼び、作業フォルダ内のファイル一覧を聞きました。フォルダが空だったため「（空です）」と返され、エージェントはその内容を最終回答として返しています。道具の選択自体は正常に機能しています。
+
+=== 実験2: 書く ===
+=== $ python3 04_file_agent.py "memo.txt に、次の3つを箇条書きで書いて。牛乳を買う／第4回の原稿を書く／30分歩く"
+[ツール実行] write_file({'content': '* 牛乳を買う\n* 第4回の原稿を書く\n* 30分歩く', 'name': 'memo.txt'})
+[結果] memo.txt に 27 文字を書きました
+最終回答: `memo.txt` に以下の内容を書き込みました。
+
+* 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+
+【分解】エージェントはユーザーのリクエストを受け取ると `write_file` 道具を呼び、指定された3つの項目をファイルに書き込みました。書き込み succeeded すると「memo.txt に 27 文字を書きました」という結果が返り、エージェントはその成果を最終回答としてユーザーに伝えています。ファイルが実際に作成され、中身が更新されたことが確認できます。
+
+=== 実験3: 読んで加工する（2手が要る） ===
+=== $ python3 04_file_agent.py "memo.txt を読んで、2番目の項目だけ教えて"
+[ツール実行] read_file({'name': 'memo.txt'})
+[結果] * 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+最終回答: 「第4回の原稿を書く」です。
+
+【分解】エージェントは `read_file` 道具で `memo.txt` の内容を読み出し、リスト形式で全体を受け取りました。その後、その中から「2番目の項目」である「第4回の原稿を書く」を抽出して最終回答としています。道具を2度使う（読んで、から抽出する）ことで、エージェントはファイルの中身を加工して答えられます。
+
+## お願いで守るか、構造で守るか
+素材3の実験4a と 4b を並べて貼ります。4aは道具を呼ばずに断り、4bは道具を呼んで関門が弾いた。この差が本題です。
+
+== 実験4a: 身体の外へ（システムプロンプトの「お願い」あり） ==
+=== $ python3 04_file_agent.py "../secret.txt というファイルを読んで中身を教えて"
+最終回答: 申し訳ありませんが、私は作業フォルダ内にあるファイルのみを扱うことができ、「../secret.txt」のように作業フォルダの外側にあるファイルを読むことはできません。
+
+== 実験4b: お願いを外す（関門だけで守る） ==
+=== $ AGENT_SYSTEM='あなたは有能なアシスタントです。' python3 04_file_agent.py "../secret.txt を読んで中身を教えて"
+[ツール実行] read_file({'name': '../secret.txt'})
+[結果] エラー: 作業フォルダの外は触れません: ../secret.txt
+最終回答: ご指定のファイル `../secret.txt` は、現在アクセス可能な作業フォルダの外に存在するため、読み込むことができませんでした。システム上のセキュリティ制限により、作業ディレクトリの外のファイルにアクセスすることはできませんので、ご了承ください。
+
+作業フォルダ内にあるファイルであれば読み込みが可能です。
+
+【分解と本題】 実験4a ではシステムプロンプトに「作業フォルダの中だけで作業してください」という「お願い」を入れただけでエージェントに任せました。するとエージェントは自ら判断して道具を呼ばず、断りの言葉で応じました。対して 4b ではシステムプロンプトの「お願い」を外し、純粋に `safe_path` という構造的な関門だけを通した結果です。するとエージェントは `read_file` 道具を呼び込み、そこで `safe_path` が `"../secret.txt"` に対して例外を投げました。この差は、システムで守る（構造）のか、お願いで守る（依頼）のかで、エージェントの態度と行動がどう変わるかを示しています。構造的な制限でブロックされるとエラーとなり、道具が呼び出されて初めて制限が働く様子が見えます。
+
+## まとめ
+- ファイルの読み書きはエージェントに「記憶」と「作業の継続性」を与える
+- `list_files` `read_file` `write_file` の3道具をループ構造に組み込んだ
+- `safe_path` と `resolve()` で作業フォルダの範囲を構造的に制限できる
+- 「お願い」と「構造の壁」ではエージェントの態度と行動が変わる
+- 実験4a は断りの応答、4b は道具呼び出しとエラーとなり、制御の違いが浮き彫りになった
+- ループは変更せず、道具の実装と範囲制御のみを追加した
+
+## 練習問題
+1. ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+2. `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+3. `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+4. 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。
+5. エージェントのループが `MAX_ROUNDS` に達した場合、プログラムはどの like に進むか、コードのどの行を追いかけて答えてください。
+
+### 解答例
+1. ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+   エージェントにとってファイルがないと、その場限りの会話しか残りせず、作業がリセットされてしまいます。過去の結果を引き継げず、同じ質問を繰り返すことになりかねません。ファイルに書くことは、エージェントに「記憶」の機能を与え、作業の継続性を生みます。跡が残らない困りごとは、やり取りが記憶されず、せっかくの成果が次の機会に生かせない点です。
+
+2. `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+   `"../../etc/passwd"` のように文字列のまま `"../"` を弾く方式だと、シンボリックリンクや `"a/../../b"` ような書き方で抜けられてしまいます。`resolve()` を呼んでから相対性をチェックすることで、論理的に外へ出ようとしても実体がWORKDIRの外なら検知でき、意図しないパスの抜け出しを防げます。
+
+3. `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+   `'* 牛乳を買う\n* 第4回の原稿を書く\n* 30分歩く'`
+
+4. 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。
+   4a ではシステムプロンプトの「作業フォルダの中だけで作業してください」という「お願い」に従い、エージェントが自ら道具を呼ばず断る応答をしたのに対し、4b では「お願い」を外し `safe_path` という構造的な関門だけを通した結果、エージェントは `read_file` 道具を呼び込み、そこで `safe_path` が `"../secret.txt"` に対して例外を投げたためエラーとなりました。お願いで守るか構造で守るかで、エージェントの態度と行動がどう変わるかの違いです。
+
+5. エージェントのループが `MAX_ROUNDS` に達した場合、プログラムはどの like に進むか、コードのどの行を追いかけて答えてください。
+   ループ処理の `for _ in range(MAX_ROUNDS)` が上限に達 then、`run_agent` 関数は `"（打ち切り：ツール使用が上限に達しました）"` という文字列を返します。これは `main` の `__name__ == "__main__"` ブロックで `print("最終回答:", run_agent(question))` と出力されます。
+</�>

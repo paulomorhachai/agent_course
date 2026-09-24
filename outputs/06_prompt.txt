@@ -1,0 +1,273 @@
+あなたは、プログラミング教材の書き手です。
+「LLMエージェント自作講座」（全12回・日本語・Note公開）の**第6回**の本文を書いてください。
+
+## 講座の性格
+
+- 読者は Python を書ける初学者。フレームワークは使わず、標準ライブラリだけで組む
+- 毎回、実際に手元のローカルモデル（gemma4:e4b）を走らせて、その挙動を観察する
+- 第1回=whileループ、第2回=道具を持たせる、第3回=道具を選ばせる、
+  第4回=ファイルという身体（読み書きと作業フォルダの関門）、まで済んでいる
+- 第6回のテーマは「思考を覗く」
+
+## 構成（この順で、この見出しで書く。各節に何を入れるかも守る）
+
+- `## 前回の復習` — 第5回までを3〜4文で
+- `## エージェントは見えない` — 何が起きたか分からないという困りごとから入る
+- `## 一行ずつ足跡を残す` — **素材1から `trace` を貼る**。JSON Lines にする理由を説明
+- `## 実験：足跡を読む` — **素材2のログをそのまま貼り**、周回ごとに何が起きたか分解する
+- `## 失敗の分類` — 観測された失敗を型に分ける（道具を呼ばない／引数が違う／止まらない）
+- `## まとめ` — 箇条書き4〜6項目
+- `## 練習問題` — **5問**。うち2問はコードを書かせず理由を説明させる問い
+- `### 解答例` — 5問すべてに答える
+
+
+## 分量とコードの扱い
+
+- 本文は**6,000字程度**。各節を1段落で済ませない
+- コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。
+  長い部分は関係する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする
+
+## 絶対の禁止
+
+**実行結果を自分で書かないこと。** 下に渡した実測ログに無い出力・エラー文・
+モデルの回答を、本文に書いてはいけません。ログを引用するときは渡されたものを
+そのまま使い、そこで何が起きたかの説明を足してください。
+渡していない実験を「やってみました」と書くのも禁止です。
+
+## 文体（守ること）
+
+- 句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）
+- 一文は60字を目安、長くても100字まで。接続を重ねない
+- 英単語を地の文に生で混ぜない。訳語かカタカナにする
+  （例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）
+- 敬体（です・ます）で統一する。同じ文末を3回続けない
+- 各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない
+- コードを見せたら、それが何をしているかを日常語で1文添える
+- 数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）
+- 根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない
+- 節を「重要です」で締めない。何がどう重要かを書く
+- **「素材1」「素材2」という言葉を本文に書かない。**読者はこの指示書を読んでいない
+
+## 素材1: 本文に載せるコード（`code/06_trace.py`。この通りに引用すること）
+```python
+"""第6回: 完成品 — エージェントの足跡を残して読む
+
+使い方:  python3 06_trace.py "今の時刻の分を二乗して"   （走らせて足跡を書く）
+         python3 06_trace.py --read                      （足跡を読んで分類する）
+
+道具を足すほど、何が起きたのか分からなくなる。足跡が無いと直せない。
+"""
+import ast
+import collections
+import datetime
+import json
+import operator
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 6
+TRACE_PATH = Path(__file__).resolve().parent / "trace.jsonl"
+
+# ---------- 足跡 ----------
+
+def trace(kind, **fields):
+    """1件1行のJSONで書き足す。
+
+    JSON Lines にするのは、途中で落ちても壊れないから。1行が独立しているので、
+    書きかけの行を捨てれば残りは読める。表形式や1つの大きなJSONだと、
+    最後まで書き終えないと読めない。
+    """
+    rec = {"t": datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3], "kind": kind}
+    rec.update(fields)
+    with TRACE_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+# ---------- 道具（第3回と同じ2つ） ----------
+
+OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+       ast.Div: operator.truediv, ast.Pow: operator.pow, ast.USub: operator.neg}
+
+
+def calc(expression):
+    def ev(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in OPS:
+            return OPS[type(node.op)](ev(node.left), ev(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in OPS:
+            return OPS[type(node.op)](ev(node.operand))
+        raise ValueError("数値と + - * / ** 以外は使えません")
+    return ev(ast.parse(expression, mode="eval").body)
+
+
+def now():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+TOOLS_IMPL = {"calc": calc, "now": now}
+
+TOOLS_SPEC = [
+    {"type": "function", "function": {
+        "name": "calc", "description": "数式を計算して正確な答えを返す電卓",
+        "parameters": {"type": "object", "properties": {
+            "expression": {"type": "string", "description": "例: 12*(3+4)"}},
+            "required": ["expression"]}}},
+    {"type": "function", "function": {
+        "name": "now", "description": "現在の日時を返す",
+        "parameters": {"type": "object", "properties": {}}}},
+]
+
+
+def chat(messages):
+    payload = {"model": MODEL, "messages": messages, "tools": TOOLS_SPEC, "stream": False}
+    req = urllib.request.Request(
+        OLLAMA_URL, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+def run_agent(user_input):
+    trace("start", question=user_input)
+    messages = [
+        {"role": "system", "content": "あなたは正確さを重視するアシスタントです。"},
+        {"role": "user", "content": user_input},
+    ]
+    for i in range(1, MAX_ROUNDS + 1):
+        msg = chat(messages)
+        messages.append(msg)
+        calls = msg.get("tool_calls") or []
+        trace("round", n=i, n_calls=len(calls), said=(msg.get("content") or "")[:60])
+        if not calls:
+            trace("end", reason="answered", rounds=i)
+            return msg["content"]
+        for call in calls:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            try:
+                result = TOOLS_IMPL[name](**args)
+                trace("tool", n=i, name=name, args=args, ok=True, result=str(result)[:60])
+            except Exception as e:
+                result = f"エラー: {e}"
+                trace("tool", n=i, name=name, args=args, ok=False, error=str(e)[:60])
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    trace("end", reason="max_rounds", rounds=MAX_ROUNDS)
+    return "（打ち切り：ツール使用が上限に達しました）"
+
+
+# ---------- 足跡を読む ----------
+
+def classify(records):
+    """1回の走行を型に分ける。型を決めておくと、直す場所が決まる。"""
+    kinds = collections.Counter(r["kind"] for r in records)
+    bad = [r for r in records if r["kind"] == "tool" and not r.get("ok")]
+    end = next((r for r in records if r["kind"] == "end"), {})
+    if end.get("reason") == "max_rounds":
+        return "止まらない（上限で打ち切り）"
+    if bad:
+        return f"引数か呼び方が違う（失敗した道具呼び出し {len(bad)}件）"
+    if kinds["tool"] == 0:
+        return "道具を呼ばない（自分で答えた）"
+    return f"正常（道具 {kinds['tool']}回 / {end.get('rounds', '?')}周）"
+
+
+def read_trace():
+    if not TRACE_PATH.exists():
+        print("足跡がありません")
+        return
+    runs, cur = [], []
+    for line in TRACE_PATH.read_text(encoding="utf-8").splitlines():
+        rec = json.loads(line)
+        if rec["kind"] == "start" and cur:
+            runs.append(cur)
+            cur = []
+        cur.append(rec)
+    if cur:
+        runs.append(cur)
+    for run in runs:
+        print(f"--- 質問: {run[0].get('question')}")
+        for rec in run[1:]:
+            if rec["kind"] == "round":
+                print(f"  {rec['t']} 周{rec['n']}: 道具{rec['n_calls']}件"
+                      + (f" 「{rec['said']}」" if rec["said"] else ""))
+            elif rec["kind"] == "tool":
+                mark = "OK" if rec.get("ok") else "NG"
+                print(f"  {rec['t']}   {mark} {rec['name']}({rec['args']})"
+                      f" → {rec.get('result') or rec.get('error')}")
+            elif rec["kind"] == "end":
+                print(f"  {rec['t']} 終了: {rec['reason']}")
+        print(f"  分類: {classify(run)}")
+
+
+if __name__ == "__main__":
+    if "--read" in sys.argv:
+        read_trace()
+    else:
+        q = sys.argv[1] if len(sys.argv) > 1 else "今の時刻の分を二乗して"
+        print("最終回答:", run_agent(q))
+```
+## 素材2: 実測ログ（これが唯一の実行結果。ここに無いものは書かない）
+```
+== 走らせる（3本） ==
+=== $ python3 06_trace.py "今の時刻の分を二乗して"
+最終回答: 現在の時刻の分は26分ですので、これを二乗すると**676**になります。
+
+=== $ python3 06_trace.py "こんにちは"
+最終回答: こんにちは！😊
+
+何かお手伝いできることはありますか？ご質問や、お手伝いが必要なタスクなどがあれば、何でもお気軽にお知らせください。
+
+=== $ python3 06_trace.py "1から100までの素数を全部足して"
+最終回答: 1から100までの素数は以下の25個です。
+
+2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
+
+これらの素数をすべて足し合わせると、**1060** になります。
+
+== 足跡を読む ==
+=== $ python3 06_trace.py --read
+--- 質問: 今の時刻の分を二乗して
+  00:26:53.626 周1: 道具1件
+  00:26:53.627   OK now({}) → 2026-08-21 00:26:53
+  00:26:55.223 周2: 道具1件
+  00:26:55.224   OK calc({'expression': '26*26'}) → 676
+  00:26:57.064 周3: 道具0件 「現在の時刻の分は26分ですので、これを二乗すると**676**になります。」
+  00:26:57.065 終了: answered
+  分類: 正常（道具 2回 / 3周）
+--- 質問: こんにちは
+  00:26:58.014 周1: 道具0件 「こんにちは！😊
+
+何かお手伝いできることはありますか？ご質問や、お手伝いが必要なタスクなどがあれば、何でもお気軽にお知ら」
+  00:26:58.014 終了: answered
+  分類: 道具を呼ばない（自分で答えた）
+--- 質問: 1から100までの素数を全部足して
+  00:27:05.801 周1: 道具1件
+  00:27:05.802   OK calc({'expression': '2 + 3 + 5 + 7 + 11 + 13 + 17 + 19 + 23 + 29 + 31 + 37 + 41 + 43 + 47 + 53 + 59 + 61 + 67 + 71 + 73 + 79 + 83 + 89 + 97'}) → 1060
+  00:27:08.471 周2: 道具0件 「1から100までの素数は以下の25個です。
+
+2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 3」
+  00:27:08.472 終了: answered
+  分類: 正常（道具 1回 / 2周）
+
+== 足跡ファイルの生（先頭6行） ==
+{"t": "00:26:46.070", "kind": "start", "question": "今の時刻の分を二乗して"}
+{"t": "00:26:53.626", "kind": "round", "n": 1, "n_calls": 1, "said": ""}
+{"t": "00:26:53.627", "kind": "tool", "n": 1, "name": "now", "args": {}, "ok": true, "result": "2026-08-21 00:26:53"}
+{"t": "00:26:55.223", "kind": "round", "n": 2, "n_calls": 1, "said": ""}
+{"t": "00:26:55.224", "kind": "tool", "n": 2, "name": "calc", "args": {"expression": "26*26"}, "ok": true, "result": "676"}
+{"t": "00:26:57.064", "kind": "round", "n": 3, "n_calls": 0, "said": "現在の時刻の分は26分ですので、これを二乗すると**676**になります。"}
+```
+## 出力の形式
+
+**下書きを書かないでください。** 1文字目を <<<SECTION>>> にし、最後に <<<END>>> を置きます。
+この2つのマーカーの間だけが提出物です。
+
+<<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第6回 — （続きを書く）
+
+（ここに本文をMarkdownで。上の構成の見出しを順に）
+<<<END>>>

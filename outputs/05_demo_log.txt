@@ -1,0 +1,33 @@
+== 実験A: 同じ式を naive_eval と safe_eval に通す ==
+=== $ AGENT_AUTO_YES=1 python3 05_safe_exec.py
+--- 式: 12*(3+4)
+  naive_eval → 84
+  safe_eval  → 84
+--- 式: 2**10
+  naive_eval → 1024
+  safe_eval  → 1024
+--- 式: __import__("os").listdir(".")[:3]
+  naive_eval → ['文体規約.md', '.DS_Store', '第4回_ファイルという身体_草稿.md']
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: open(__file__).read()[:20]
+  naive_eval → '"""第5回: 完成品 — 道具に安全装'
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: 2**999999
+  naive_eval → 例外 ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+  safe_eval  → 拒否 ValueError: べき乗の指数が大きすぎます（上限 1000）
+--- 層3: 実行前の確認
+[確認] memo.txt を上書き → 自動承認（AGENT_AUTO_YES=1）
+  confirm の戻り値: True
+
+== 実験B: エージェントに安全な電卓を使わせる ==
+=== $ python3 05_safe_exec.py "12*(3+4) を計算して"
+[ツール実行] calc({'expression': '12*(3+4)'})
+[結果] 84
+最終回答: 計算結果は **84** です。
+
+== 実験C: エージェントに危ない式を書かせようとする ==
+=== $ python3 05_safe_exec.py "電卓で __import__('os').listdir('.') を評価して"
+最終回答: 私は大規模言語モデルであり、セキュリティと安全性の制約から、実際にファイルシステムにアクセスしたり、オペレーティングシステム（OS）のコマンドを実行したりすることはできません。
+
+したがって、`__import__('os').listdir('.')` のように現在のディレクトリの内容を読み出す処理を評価することは不可能です。このコードを実行するには、ローカルのPython環境が必要です。
+

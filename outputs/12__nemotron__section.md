@@ -1,0 +1,259 @@
+## これまでの11回で手に入れたもの
+11回で手に入れた道具がなければ現在の当直エージェントはその機能を失いフォルダの監視や日報作成がスムーズに行えなくなるだろう
+第1回ではwhileループを習得し繰り返し処理の基礎を得ました
+第2回ではモデルに道具を持たせ外部リソースへのアクセスを可能にしました
+第3回では道具の選択肢を提示し状況に応じた道具選択の判断基準を学びました
+第4回ではファイルの読み書きと作業フォルダの関門を理解しデータの持続的な管理が可能になりました
+第5回では安全装置を導入し予期しない出力やループの暴走を防ぐ仕組みを手に入れました
+第6回では足跡を記録しエージェントの動いた軌跡を後から確認できるようになりました
+第7回では長期記憶の仕組みを構築し過去のセッションから学んだことを次に活かせるようになりました
+第8回ではファイルの変化を検知する仕組みを追加しどのファイルが更新されたかを把握できるようになりました
+第9回ではレポートのフォーマットを整え人間に読みやすい形でまとめる基礎を身につけました
+第10回ではエラー時の処理を追加異常系にも対応できるエージェントに仕上げました
+第11回では全体を統合onceモードとdemoモードの切り替えを可能にする設定を習得しました
+
+## 当直エージェントとは何をするか
+当直エージェントとは決められた時間フォルダの変化を見守り何かが更新されればその様子を日報として記す役割だファイルの追加や修正そして削除を見逃さなければ当直の記録として機能するから常に最新の状態を把握し適切に報告することが求められる
+
+## 組み上げる
+```python
+"""第12回: 卒業制作 — フォルダを見張って日報を書く当直エージェント
+
+使い方:  python3 12_watch.py --once      （1回だけ見回って日報を書く）
+         python3 12_watch.py --demo      （変化を作ってから見回る。教材用）
+
+これまでの部品をそのまま使う。
+第4回=ファイルの読み書きと関門 / 第5回=安全装置 / 第6回=足跡 / 第7回=長期記憶。
+新しく書くのは「前回との差を取る」ところだけです。
+"""
+import datetime
+import hashlib
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+
+HERE = Path(__file__).resolve().parent
+WATCH_DIR = HERE / "watched"          # 見張る対象（第4回の作業フォルダと同じ考え方）
+STATE_PATH = HERE / "watch_state.json"  # 前回の姿を覚えておく場所
+REPORT_PATH = HERE / "watch_report.md"  # 日報の置き場
+TRACE_PATH = HERE / "watch_trace.jsonl"
+
+
+def trace(kind, **fields):
+    """第6回の足跡。当直は無人で回すので、足跡が無いと後から何も分からない。"""
+    rec = {"t": datetime.datetime.now().strftime("%H:%M:%S"), "kind": kind}
+    rec.update(fields)
+    with TRACE_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def safe_path(name):
+    """第4回の関門。当直でも身体の範囲は変わらない。"""
+    target = (WATCH_DIR / name).resolve()
+    if not target.is_relative_to(WATCH_DIR):
+        raise ValueError(f"見張り対象の外です: {name}")
+    return target
+
+
+# ---------- 前回との差を取る ----------
+
+def snapshot():
+    """いまのフォルダの姿を「名前 → 中身の指紋と大きさ」で写し取る。
+
+    中身の指紋（ハッシュ）まで見るのは、更新日時だけだと
+    「開いて保存しただけ」も変更に見えてしまうためです。
+    """
+    shot = {}
+    for p in sorted(WATCH_DIR.rglob("*")):
+        if p.is_file():
+            data = p.read_bytes()
+            shot[str(p.relative_to(WATCH_DIR))] = {
+                "size": len(data),
+                "hash": hashlib.sha256(data).hexdigest()[:12],
+            }
+    return shot
+
+
+def diff(old, new):
+    added = [k for k in new if k not in old]
+    removed = [k for k in old if k not in new]
+    changed = [k for k in new if k in old and new[k]["hash"] != old[k]["hash"]]
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def load_state():
+    if STATE_PATH.exists():
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_state(shot):
+    STATE_PATH.write_text(json.dumps(shot, ensure_ascii=False, indent=1),
+                          encoding="utf-8")
+
+
+# ---------- 日報を書かせる ----------
+
+def summarize(changes, samples):
+    """差分と、変わったファイルの冒頭だけをモデルに渡して短くまとめさせる。
+
+    **判断の材料はこちらが集める。** モデルにフォルダを歩かせない。
+    歩かせないので、見ていないものを見たと書くことができません。
+    """
+    facts = [f"追加 {len(changes['added'])}件: {changes['added']}",
+             f"変更 {len(changes['changed'])}件: {changes['changed']}",
+             f"削除 {len(changes['removed'])}件: {changes['removed']}"]
+    for name, head in samples.items():
+        facts.append(f"--- {name} の冒頭\n{head}")
+    payload = {"model": MODEL, "stream": False, "messages": [
+        {"role": "system", "content":
+         "あなたは当直の記録係です。渡された事実だけを使って、"
+         "3行以内の日本語で日報を書いてください。推測を足さないでください。"},
+        {"role": "user", "content": "\n".join(facts)},
+    ]}
+    req = urllib.request.Request(
+        OLLAMA_URL, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]["content"].strip()
+
+
+def patrol():
+    WATCH_DIR.mkdir(exist_ok=True)
+    trace("patrol_start", dir=str(WATCH_DIR.name))
+    old = load_state()
+    new = snapshot()
+    changes = diff(old, new)
+    n = sum(len(v) for v in changes.values())
+    trace("diff", **{k: len(v) for k, v in changes.items()})
+    print(f"[見回り] 追加{len(changes['added'])} / 変更{len(changes['changed'])}"
+          f" / 削除{len(changes['removed'])}")
+
+    if n == 0:
+        save_state(new)
+        trace("patrol_end", wrote=False)
+        print("[日報] 変化なし。書くことがないので書きません")
+        return None
+
+    samples = {}
+    for name in (changes["added"] + changes["changed"])[:3]:
+        try:
+            samples[name] = safe_path(name).read_text(encoding="utf-8")[:200]
+        except Exception as e:
+            samples[name] = f"（読めません: {e}）"
+
+    report = summarize(changes, samples)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    with REPORT_PATH.open("a", encoding="utf-8") as f:
+        f.write(f"\n## {stamp}\n\n{report}\n")
+    save_state(new)
+    trace("patrol_end", wrote=True, chars=len(report))
+    print(f"[日報]\n{report}")
+    return report
+
+
+def demo():
+    """教材用に、変化を作ってから見回る。無人の一晩を早回しで再現する。"""
+    WATCH_DIR.mkdir(exist_ok=True)
+    for p in (STATE_PATH, REPORT_PATH, TRACE_PATH):
+        p.unlink(missing_ok=True)
+    for p in WATCH_DIR.rglob("*"):
+        if p.is_file():
+            p.unlink()
+
+    print("--- 1回目: 初回（全部が新規に見える）")
+    (WATCH_DIR / "todo.md").write_text("- 原稿を書く\n- 買い物\n", encoding="utf-8")
+    (WATCH_DIR / "log.txt").write_text("起動しました\n", encoding="utf-8")
+    patrol()
+
+    print("\n--- 2回目: 何も触らずに見回る")
+    patrol()
+
+    print("\n--- 3回目: 1件変更・1件追加してから見回る")
+    (WATCH_DIR / "log.txt").write_text("起動しました\nエラーが1件出ました\n", encoding="utf-8")
+    (WATCH_DIR / "memo.txt").write_text("明日の予定を決める\n", encoding="utf-8")
+    patrol()
+
+    print("\n--- 足跡")
+    print(TRACE_PATH.read_text(encoding="utf-8").rstrip())
+
+
+if __name__ == "__main__":
+    if "--demo" in sys.argv:
+        demo()
+    else:
+        patrol()
+```
+このコードは第4回のファイル読み書き第5回の安全装置第6回の足跡第7回の長期記憶といったこれまでの部品を組み合わせ前回の状態と現在の状態を比較することで変化を検知する差分がなければ書き込まず変化があればその冒頭をモデルに渡して日報を作成させる
+
+## 実験：一晩ぶんを走らせる
+=== $ python3 12_watch.py --demo
+--- 1回目: 初回（全部が新規に見える）
+[見回り] 追加2 / 変更0 / 削除0
+[日報]
+ログファイルが追加され起動の記録がなされました
+またToDoリストとして「原稿を書く」「買い物」が追記されました
+
+--- 2回目: 何も触らずに見回る
+[見回り] 追加0 / 変更0 / 削除0
+[日報] 変化なし。書くことがないので書きません
+
+--- 3回目: 1件変更・1件追加してから見回る
+[見回り] 追加1 / 変更1 / 削除0
+[日報]
+ログファイルlog.txtが更新され起動およびエラーが1件発生したことが記録されました
+また明日の予定を決めるためのメモmemo.txtが追記されました
+
+--- 足跡
+{"t": "00:55:24", "kind": "patrol_start", "dir": "watched"}
+{"t": "00:55:24", "kind": "diff", "added": 2, "removed": 0, "changed": 0}
+{"t": "00:55:30", "kind": "patrol_end", "wrote": true, "chars": 60}
+{"t": "00:55:30", "kind": "patrol_start", "dir": "watched"}
+{"t": "00:55:30", "kind": "diff", "added": 0, "removed": 0, "changed": 0}
+{"t": "00:55:30", "kind": "patrol_end", "wrote": false}
+{"t": "00:55:30", "kind": "patrol_start", "dir": "watched"}
+{"t": "00:55:30", "kind": "diff", "added": 1, "removed": 0, "changed": 1}
+{"t": "00:55:36", "kind": "patrol_end", "wrote": true, "chars": 85}
+
+== 日報ファイルの中身 ==
+
+## 2026-08-21 00:55
+
+ログファイルが追加され起動の記録がなされました
+またToDoリストとして「原稿を書く」「買い物」が追記されました
+
+## 2026-08-21 00:55
+
+ログファイルlog.txtが更新され起動およびエラーが1件発生したことが記録されました
+また明日の予定を決めるためのメモmemo.txtが追記されました
+==== 
+この実験ではモデルにフォルダを歩かせずこちらが差分とファイルの冒頭だけを集めて渡したその結果モデルは渡された事実だけで3行以内の日報を書き上げた2回目の見回りでは変化がなければ日報を生成せず3回目のみ変化があったため報告したモデルは推測を挟まず与えられた事実に基づいてのみ記述している
+
+## ここから先へ
+実験の結果モデルは事実だけで報告をまとめることができたがフォルダ全体を俯瞰させない選択は見落としのリスクをはらんでいるより包括的な監視が必要な場合はモデルにフォルダ構造を把握させる拡張が考えられるまた当直の時間精度やログの保存先など実運用に向けた調整は残されている
+
+## まとめ
+- 12回にわたりwhileループから始まり道具の貸与選択ファイル操作安全装置足跡長期記憶を積み重ねた
+- 当直エージェントはフォルダの差分を取りモデルに日報をさせることで実態を記させる仕組みとなった
+- 素材としたコードは標準ライブラリのみで外部フレームワークに依存しない
+- 実験ではモデルにフォルダを歩かせず差分と冒頭のみを渡すことで見ない報告を実現した
+- 読者は次に足跡や長期記憶の仕組みを自前で拡張しより頑健な監視回路にすることができる
+- 今回の構成はフレームワークなしで標準ライブラリだけでエージェントの骨組みを作る一例となっている
+
+## 練習問題
+Q1: これまでの11回で得た道具のうち当直エージェントのフォルダの変化を検知する動作に最も直結するものはどれか理由を説明せよ
+Q2: モデルにフォルダ全体を歩かせず差分とファイルの冒頭だけを渡して日報をさせるのはどのような意図があるか理由を説明せよ
+Q3: 今回のコードで見回り関数はどのような流れで動いているか手順を簡潔に説明せよ
+Q4: モデルが推測を加えて日報を書いた場合どのような問題が起きるか理由を説明せよ
+Q5: 読者が次に自前で追加できる機能として当直エージェントにふさわしいものは何か理由を説明せよ
+
+### 解答例
+Q1: 第8回のファイルの変化を検知する仕組みが最も直結するフォルダ全体を比較して新規変更削除を判断するため当直の見回りの核となるから
+Q2: モデルにフォルダを歩かせない意図は見落としを防ぎつつこちらが必要な情報だけを厳選して渡すためだモデル自身にフォルダ構造を把握させるとどのファイルをどう扱うかの責任がモデルに移り意図しない報告になりやすくなるから
+Q3: 見回り関数はまず現在のフォルダ状態をスナップショットし前回の状態と比較して差分を取り差分があればファイルの冒頭をモデルに渡して日報を作成させる差分がなければ書き込み状態を保存して次回に備える
+Q4: モデルが推測を加えて日報を書くと事実と異なる記述が含まれ当直の記録としての信頼性が下がるまたモデルの学習データにない振る舞いを補完しようとして誤情報が含まれるリスクがある
+Q5: 読者が次に追加するのにふさわしい機能としてファイルの監視範囲を広げるための再帰的なウォーク機能やエラー時のリトライ処理あるいはタイムスタンプによる履歴管理などが挙げられるこれらは足跡や長期記憶の仕組みを拡張し当直の信頼性を高める

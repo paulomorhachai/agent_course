@@ -1,0 +1,146 @@
+# LLMエージェント自作講座 第5回 — 安全装置を作る
+
+## 前回の復習
+前回のファイル制御がなければ、ワークフォルダ外のファイルにアクセスされ、意図しないデータ漏洩につながるおそれがあります。第1回のwhileループから第4回のファイル読み書きまでの流れを4文で振り返ると、各回で何を制限し、何を可能にしたかが見えてきます。特に第4回までは「ファイルという身体」に焦点を当て、読み書きの許容範囲をどう決めるかが繰り返し課題でした。今回はその中で道具に与える権限の在り方を考え、安全装置を三枚重ねる構成に移ります。
+
+## 道具は権限そのもの
+道具一つをエージェントに渡すことは、その人に権限を一つ渡すことに等しいと言っても過言ではありません。以前、あるエージェントがファイル全体を読み込んでしまい、意図しない情報が漏れたケースがありました。道具に何をさせるか、何がさせられないかを明確にしないと、システム全体が破壊されるリスクがあります。そこで今回は、道具に与える権限をどう設計し、どう制限するかを考えます。
+
+## eval という落とし穴
+まず、危険な実行の代表例である `naive_eval` を導入します。以下のコードです。
+
+```python
+def naive_eval(expression):
+    """一行で済む電卓。そして一行で全部渡してしまう電卓でもある。
+
+    eval は「式」を評価するが、Python の式は関数呼び出しを含む。
+    つまり計算だけを頼んだつもりで、実行環境そのものを渡している。
+    """
+    return eval(expression)
+```
+この関数は与えられた文字列をそのまま評価し、実行環境に自由にアクセスさせます。次に、実測ログでその危険性を確認しましょう。
+
+==
+=== 実験A: 同じ式を naive_eval と safe_eval に通す ===
+=== $ AGENT_AUTO_YES=1 python3 05_safe_exec.py
+--- 式: 12*(3+4)
+  naive_eval → 84
+  safe_eval  → 84
+--- 式: 2**10
+  naive_eval → 1024
+  safe_eval  → 1024
+--- 式: __import__("os").listdir(".")[:3]
+  naive_eval → ['文体規約.md', '.DS_Store', '第4回_ファイルという身体_草稿.md']
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: open(__file__).read()[:20]
+  naive_eval → '"""第5回: 完成品 — 道具に安全装
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: 2**999999
+  naive_eval → 例外 ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+  safe_eval  → 拒否 ValueError: べき乗の指数が大きすぎます（上限 1000）
+--- 層3: 実行前の確認
+[確認] memo.txt を上書き → 自動承認（AGENT_AUTO_YES=1）
+  confirm の戻り値: True
+==
+
+このように `naive_eval` は計算式だけでなく、 `__import__` や `open` といった実行環境へのアクセスも含めて実行されてしまいます。計算を頼んだつもりが、ファイルの中身やディレクトリのリストが平気で返ってくるのは、コードが文字列として渡されただけで実行されてしまうからです。次に、それを防ぐホワイトリスト方式を導入します。
+
+## ホワイトリストで許す側を数える
+次に、許容する構文だけを列挙する `safe_eval` を導入します。以下のコードです。
+
+```python
+OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.Div: operator.truediv,
+    ast.Pow: operator.pow, ast.USub: operator.neg,
+    ast.Mod: operator.mod, ast.FloorDiv: operator.floordiv,
+}
+
+MAX_POW = 1000  # 2**999999999 のような式で固まらないための上限
+
+
+def safe_eval(expression):
+    """数と + - * / // % ** だけを許す電卓。それ以外は木の形で弾く。"""
+    def ev(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in OPS:
+            left, right = ev(node.left), ev(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right) > MAX_POW:
+                raise ValueError(f"べき乗の指数が大きすぎます（上限 {MAX_POW}）")
+            return OPS[type(node.op]](left, right)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in OPS:
+            return OPS[type(node.op]](ev(node.operand))
+        # ここに来た時点で、許した構文の外にいる
+        raise ValueError(f"許可されていない書き方です: {type(node).__name__}")
+    return ev(ast.parse(expression, mode="eval").body)
+```
+この関数は AST 木の形で構文を検査し、許容する演算子の種類だけを評価対象とします。ここにない構文、例えば代入文やインポート、サブスクリプトアクセスなどは即座に例外となり、実行されません。禁止するリストを作るのではなく、許すリストを厳密に数えることで、漏れのない安全な絞り込みが可能になります。
+
+## 実験：危ない式を投げる
+それでは、実際に危険な式を投げてみる実験です。以下に先ほどの実験ログをそのまま貼ります。
+
+==
+=== 実験A: 同じ式を naive_eval と safe_eval に通す ===
+=== $ AGENT_AUTO_YES=1 python3 05_safe_exec.py
+--- 式: 12*(3+4)
+  naive_eval → 84
+  safe_eval  → 84
+--- 式: 2**10
+  naive_eval → 1024
+  safe_eval  → 1024
+--- 式: __import__("os").listdir(".")[:3]
+  naive_eval → ['文体規約.md', '.DS_Store', '第4回_ファイルという身体_草稿.md']
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: open(__file__).read()[:20]
+  naive_eval → '"""第5回: 完成品 — 道具に安全装
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: 2**999999
+  naive_eval → 例外 ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+  safe_eval  → 拒否 ValueError: べき乗の指数が大きすぎます（上限 1000）
+--- 層3: 実行前の確認
+[確認] memo.txt を上書き → 自動承認（AGENT_AUTO_YES=1）
+  confirm の戻り値: True
+==
+
+まず `12*(3+4)` や `2**10` のような単純な計算では、両者とも正しく `84` や `1024` を返します。しかし `__import__("os").listdir(".")[:3]` を naive_eval に通すと、意図しない形で `os` モジュールが読み込まれ、現在のディレクトリのファイルリストが返ってきてしまいます。同様に `open(__file__).read()[:20]` でも、ファイルの中身が丸ごと文字列として返ってきます。一方、`safe_eval` はどのケースでも `Subscript` （添字アクセス）を検出して拒否します。さらに `2**999999` のように指数が巨大な式の場合、naive_eval は桁数オーバーフローで例外を起こしますが、safe_eval は事前に設定した上限 `MAX_POW = 1000` を超えていれば拒否します。このように、同じ式でも安全装置の有無で結果が大きく分かれることが実験で確認されました。
+
+## 実行前の確認という第3の層
+最後に、実行前に人間に確認を促す `confirm` 関数を導入します。以下のコードです。
+
+```python
+def confirm(action):
+    """取り返しのつかない操作の前に人へ聞く。
+
+    AGENT_AUTO_YES=1 のときは聞かずに通す。自動で流したいときの逃げ道だが、
+    逃げ道を用意した瞬間に層3は無くなる、ということも一緒に覚えておきたい。
+    """
+    if os.environ.get("AGENT_AUTO_YES") == "1":
+        print(f"[確認] {action} → 自動承認（AGENT_AUTO_YES=1）")
+        return True
+    answer = input(f"[確認] {action} を実行しますか？ [y/N] ").strip().lower()
+    return answer == "y"
+```
+この関数は、ファイル上書きのような破壊的操作の前に確認ダイアログを出し、自動実行モードでない限りはユーザーの承認を待ちます。自動化を優先して確認をスキップするか、人間の目を通すかは、セキュリティと利便性のバランスの問題です。確認を置くことで、自動システムでも人間の意図を一時的に挟むことが可能になります。
+
+## まとめ
+- 道具に権限を渡す際は、その責任範囲を明確に定義すること
+- `eval` は実行環境を丸ごと渡してしまうため、常に安全装置が必要である
+- ホワイトリストにより許容構文を限定することは、ブラックリストの穴を塞ぐのに有効である
+- 実行前の確認は自動化と人間の監督の境界線となり得る
+- べき乗の指数上限など、数値的な閾値はユースケースに応じて設定すること
+- 複重のセーフティレイヤーを設けることで、一つの失敗でもシステムが機能し続けるようにすること
+
+## 練習問題
+1. エージェントに計算させる際、なぜ `naive_eval` ではなく `safe_eval` を使うべきか、理由を説明しなさい。
+2. エージェントにファイルを読み込ませる操作を許可する場合、どのような事前チェックを行うべきか、理由を説明しなさい。
+3. `confirm` 関数を使う際、 `AGENT_AUTO_YES=1` を設定するメリットとデメリットをそれぞれ一つずつ挙げなさい。
+4. ホワイトリスト方式とブラックリスト方式、どちらがセキュリティ上有利か、その理由を比較しなさい。
+5. エージェントに `2**999999` のような巨大な計算をさせないために、事前に何ができるか、具体的な対策を二つ挙めなさい。
+
+### 解答例
+1. `naive_eval` は文字列をそのまま実行環境に渡してしまうため、計算以外のコードが実行されてセキュリティリスクがある。対して `safe_eval` は許容する演算子の AST 木だけを評価し、不審な構文は即座に拒否するため、安全である。
+2. 読み込むファイルのパスがワークフォルダの範囲内か、中身が期待する形式かを事前チェックする。不審なパスやバイナリファイルの読み込みは遮断し、意図しないファイルアクセスを防ぐ。
+3. 【メリット】自動化処理が高速化し、人間の介在が不要となる。【デメリット】確認をスキップすることで重大な操作（上書き削除など）が無意識に実行され、事故の原因となる可能性がある。
+4. ホワイトリストは許容する構文のみを列挙すればよく、新たな脆弱性が出ても気づきやすい。ブラックリストは禁止事項を列挙するため、漏れがあれば即座に攻撃を受ける可能性があり、セキュリティ上ホワイトリストの方が有利である。
+5. べき乗の指数に上限を設け、計算結果の文字列桁数が上限を超えたら例外を起こすようにする。また、事前に計算の大きさを推定してサイズ制限をかけ、必要以上のリソース消費を防ぐ。

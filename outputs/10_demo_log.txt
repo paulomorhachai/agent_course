@@ -1,0 +1,20 @@
+=== $ python3 10_eval.py
+--- 受け取り方: 厳格 strict_json
+  拒否 0/3  JSONDecodeError: Expecting value: line 1 column 1 (char 0  生='```json\n{\n  "name": "太郎",\n  "place": "札幌'
+  拒否 0/3  JSONDecodeError: Expecting value: line 1 column 1 (char 0  生='```json\n{\n  "name": "花子",\n  "place": "名古'
+  拒否 0/3  JSONDecodeError: Expecting value: line 1 column 1 (char 0  生='```json\n{\n  "name": "次郎",\n  "place": "京都'
+  受理 3/3  {'name': '美咲', 'place': '福岡', 'date': '12月8日'}
+  受理 3/3  {'name': '健一', 'place': '仙台', 'date': '8月15日'}
+  受理 2/5 件 / 合計 6/15 点
+
+--- 受け取り方: 緩い loose_parse
+  受理 3/3  {'name': '太郎', 'place': '札幌', 'date': '3月4日'}
+  受理 3/3  {'name': '花子', 'place': '名古屋', 'date': '10月1日'}
+  受理 3/3  {'name': '次郎', 'place': '京都', 'date': '5月20日'}
+  受理 3/3  {'name': '美咲', 'place': '福岡', 'date': '12月8日'}
+  受理 3/3  {'name': '健一', 'place': '仙台', 'date': '8月15日'}
+  受理 5/5 件 / 合計 15/15 点
+
+--- 生の返答（先頭2件）
+  '```json\n{\n  "name": "太郎",\n  "place": "札幌",\n  "date": "3月4日"\n}\n```'
+  '```json\n{\n  "name": "花子",\n  "place": "名古屋",\n  "date": "10月1日"\n}\n```'

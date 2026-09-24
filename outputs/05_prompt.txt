@@ -1,0 +1,271 @@
+あなたは、プログラミング教材の書き手です。
+「LLMエージェント自作講座」（全12回・日本語・Note公開）の**第5回**の本文を書いてください。
+
+## 講座の性格
+
+- 読者は Python を書ける初学者。フレームワークは使わず、標準ライブラリだけで組む
+- 毎回、実際に手元のローカルモデル（gemma4:e4b）を走らせて、その挙動を観察する
+- 第1回=whileループ、第2回=道具を持たせる、第3回=道具を選ばせる、
+  第4回=ファイルという身体（読み書きと作業フォルダの関門）、まで済んでいる
+- 第5回のテーマは「安全装置を作る」
+
+## 構成（この順で、この見出しで書く。各節に何を入れるかも守る）
+
+- `## 前回の復習` — 第4回までを3〜4文で
+- `## 道具は権限そのもの` — 道具を1つ足すことは権限を1つ渡すこと。困りごとから入る
+- `## eval という落とし穴` — **素材1から `naive_eval` を貼る**。なぜ危険かを実測ログで示す
+- `## ホワイトリストで許す側を数える` — **素材1から `safe_eval` を貼り**、
+  禁じる側でなく許す側を列挙する設計を説明する
+- `## 実験：危ない式を投げる` — **素材2のログをそのまま貼り**、1件ずつ何が起きたか説明
+- `## 実行前の確認という第3の層` — **素材1から `confirm` を貼る**。
+  自動化と安全のつり合いを論じる
+- `## まとめ` — 箇条書き4〜6項目
+- `## 練習問題` — **5問**。うち2問はコードを書かせず理由を説明させる問い
+- `### 解答例` — 5問すべてに答える
+
+
+## 分量とコードの扱い
+
+- 本文は**6,000字程度**。各節を1段落で済ませない
+- コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。
+  長い部分は関係する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする
+
+## 絶対の禁止
+
+**実行結果を自分で書かないこと。** 下に渡した実測ログに無い出力・エラー文・
+モデルの回答を、本文に書いてはいけません。ログを引用するときは渡されたものを
+そのまま使い、そこで何が起きたかの説明を足してください。
+渡していない実験を「やってみました」と書くのも禁止です。
+
+## 文体（守ること）
+
+- 句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）
+- 一文は60字を目安、長くても100字まで。接続を重ねない
+- 英単語を地の文に生で混ぜない。訳語かカタカナにする
+  （例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）
+- 敬体（です・ます）で統一する。同じ文末を3回続けない
+- 各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない
+- コードを見せたら、それが何をしているかを日常語で1文添える
+- 数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）
+- 根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない
+- 節を「重要です」で締めない。何がどう重要かを書く
+- **「素材1」「素材2」という言葉を本文に書かない。**読者はこの指示書を読んでいない
+
+## 素材1: 本文に載せるコード（`code/05_safe_exec.py`。この通りに引用すること）
+```python
+"""第5回: 完成品 — 道具に安全装置を三枚重ねる
+
+使い方:  python3 05_safe_exec.py            （安全装置の実験だけ）
+         python3 05_safe_exec.py "12*(3+4) を計算して"   （エージェントに使わせる）
+
+第4回の関門は「触れる場所」を縛るものだった。今回縛るのは「できること」。
+"""
+import ast
+import json
+import operator
+import os
+import sys
+import urllib.request
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 8
+
+# ---------- 層1: やってはいけない書き方 ----------
+
+def naive_eval(expression):
+    """一行で済む電卓。そして一行で全部渡してしまう電卓でもある。
+
+    eval は「式」を評価するが、Python の式は関数呼び出しを含む。
+    つまり計算だけを頼んだつもりで、実行環境そのものを渡している。
+    """
+    return eval(expression)
+
+
+# ---------- 層2: 許す側を数える（ホワイトリスト） ----------
+
+# 禁止したいものを並べる方式は、並べ忘れた1つで破れる。
+# だから許すものだけを列挙する。ここに無い構文は、それだけで拒否される
+OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.Div: operator.truediv,
+    ast.Pow: operator.pow, ast.USub: operator.neg,
+    ast.Mod: operator.mod, ast.FloorDiv: operator.floordiv,
+}
+
+MAX_POW = 1000  # 2**999999999 のような式で固まらないための上限
+
+
+def safe_eval(expression):
+    """数と + - * / // % ** だけを許す電卓。それ以外は木の形で弾く。"""
+    def ev(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in OPS:
+            left, right = ev(node.left), ev(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right) > MAX_POW:
+                raise ValueError(f"べき乗の指数が大きすぎます（上限 {MAX_POW}）")
+            return OPS[type(node.op)](left, right)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in OPS:
+            return OPS[type(node.op)](ev(node.operand))
+        # ここに来た時点で、許した構文の外にいる
+        raise ValueError(f"許可されていない書き方です: {type(node).__name__}")
+    return ev(ast.parse(expression, mode="eval").body)
+
+
+# ---------- 層3: 実行前に人へ聞く ----------
+
+def confirm(action):
+    """取り返しのつかない操作の前に人へ聞く。
+
+    AGENT_AUTO_YES=1 のときは聞かずに通す。自動で流したいときの逃げ道だが、
+    逃げ道を用意した瞬間に層3は無くなる、ということも一緒に覚えておきたい。
+    """
+    if os.environ.get("AGENT_AUTO_YES") == "1":
+        print(f"[確認] {action} → 自動承認（AGENT_AUTO_YES=1）")
+        return True
+    answer = input(f"[確認] {action} を実行しますか？ [y/N] ").strip().lower()
+    return answer == "y"
+
+
+# ---------- 道具として繋ぐ ----------
+
+def calc(expression):
+    return safe_eval(expression)
+
+
+TOOLS_IMPL = {"calc": calc}
+
+TOOLS_SPEC = [{
+    "type": "function",
+    "function": {
+        "name": "calc",
+        "description": "数式を計算して正確な答えを返す電卓。計算が必要なときは必ず使うこと",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {"type": "string",
+                               "description": "Python 形式の数式。例: 12*(3+4), 2**10"}
+            },
+            "required": ["expression"],
+        },
+    },
+}]
+
+
+def chat(messages):
+    payload = {"model": MODEL, "messages": messages,
+               "tools": TOOLS_SPEC, "stream": False}
+    req = urllib.request.Request(
+        OLLAMA_URL, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+def run_agent(user_input):
+    messages = [
+        {"role": "system", "content": "あなたは正確さを重視するアシスタントです。"},
+        {"role": "user", "content": user_input},
+    ]
+    for _ in range(MAX_ROUNDS):
+        msg = chat(messages)
+        messages.append(msg)
+        if not msg.get("tool_calls"):
+            return msg["content"]
+        for call in msg["tool_calls"]:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            print(f"[ツール実行] {name}({args})")
+            try:
+                result = TOOLS_IMPL[name](**args)
+            except Exception as e:
+                result = f"エラー: {e}"
+            print(f"[結果] {result}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り：ツール使用が上限に達しました）"
+
+
+# ---------- 実験 ----------
+
+CASES = [
+    "12*(3+4)",                          # ふつうの計算
+    "2**10",                             # ふつうの計算
+    '__import__("os").listdir(".")[:3]',  # 計算のふりをした環境アクセス
+    'open(__file__).read()[:20]',         # 計算のふりをしたファイル読み出し
+    "2**999999",                         # 計算だが機械を止めにかかる
+]
+
+
+def brief(value, limit=60):
+    """2**999999 のような結果は30万桁になる。画面に出す前に切り詰める。"""
+    s = repr(value)
+    return s if len(s) <= limit else f"{s[:limit]}…（全{len(s)}文字）"
+
+
+def experiment():
+    for expr in CASES:
+        print(f"--- 式: {expr}")
+        try:
+            print(f"  naive_eval → {brief(naive_eval(expr))}")
+        except Exception as e:
+            print(f"  naive_eval → 例外 {type(e).__name__}: {e}")
+        try:
+            print(f"  safe_eval  → {brief(safe_eval(expr))}")
+        except Exception as e:
+            print(f"  safe_eval  → 拒否 {type(e).__name__}: {e}")
+    print("--- 層3: 実行前の確認")
+    print(f"  confirm の戻り値: {confirm('memo.txt を上書き')}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        print("最終回答:", run_agent(sys.argv[1]))
+    else:
+        experiment()
+```
+## 素材2: 実測ログ（これが唯一の実行結果。ここに無いものは書かない）
+```
+== 実験A: 同じ式を naive_eval と safe_eval に通す ==
+=== $ AGENT_AUTO_YES=1 python3 05_safe_exec.py
+--- 式: 12*(3+4)
+  naive_eval → 84
+  safe_eval  → 84
+--- 式: 2**10
+  naive_eval → 1024
+  safe_eval  → 1024
+--- 式: __import__("os").listdir(".")[:3]
+  naive_eval → ['文体規約.md', '.DS_Store', '第4回_ファイルという身体_草稿.md']
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: open(__file__).read()[:20]
+  naive_eval → '"""第5回: 完成品 — 道具に安全装'
+  safe_eval  → 拒否 ValueError: 許可されていない書き方です: Subscript
+--- 式: 2**999999
+  naive_eval → 例外 ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit
+  safe_eval  → 拒否 ValueError: べき乗の指数が大きすぎます（上限 1000）
+--- 層3: 実行前の確認
+[確認] memo.txt を上書き → 自動承認（AGENT_AUTO_YES=1）
+  confirm の戻り値: True
+
+== 実験B: エージェントに安全な電卓を使わせる ==
+=== $ python3 05_safe_exec.py "12*(3+4) を計算して"
+[ツール実行] calc({'expression': '12*(3+4)'})
+[結果] 84
+最終回答: 計算結果は **84** です。
+
+== 実験C: エージェントに危ない式を書かせようとする ==
+=== $ python3 05_safe_exec.py "電卓で __import__('os').listdir('.') を評価して"
+最終回答: 私は大規模言語モデルであり、セキュリティと安全性の制約から、実際にファイルシステムにアクセスしたり、オペレーティングシステム（OS）のコマンドを実行したりすることはできません。
+
+したがって、`__import__('os').listdir('.')` のように現在のディレクトリの内容を読み出す処理を評価することは不可能です。このコードを実行するには、ローカルのPython環境が必要です。
+```
+## 出力の形式
+
+**下書きを書かないでください。** 1文字目を <<<SECTION>>> にし、最後に <<<END>>> を置きます。
+この2つのマーカーの間だけが提出物です。
+
+<<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第5回 — （続きを書く）
+
+（ここに本文をMarkdownで。上の構成の見出しを順に）
+<<<END>>>

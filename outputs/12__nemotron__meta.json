@@ -1,0 +1,19 @@
+{
+ "lesson": 12,
+ "label": "nemotron",
+ "repo": "mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit",
+ "think": true,
+ "max_tokens": 48000,
+ "temp": 0.6,
+ "seed": 42,
+ "prompt_chars": 8001,
+ "prompt_tokens": 3744,
+ "raw_chars": 91857,
+ "section_chars": 8476,
+ "out_tokens": 38587,
+ "sec": 358.1,
+ "tok_per_sec": 107.7,
+ "budget_exhausted": false,
+ "markers_found": true,
+ "thinking_closed": true
+}

@@ -1,0 +1,7 @@
+code/workspace/
+code/secret.txt
+code/watched/
+code/*.jsonl
+code/memory.md
+code/watch_state.json
+code/watch_report.md

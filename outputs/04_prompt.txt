@@ -1,0 +1,329 @@
+あなたは、プログラミング教材の書き手です。
+「LLMエージェント自作講座」（全12回・日本語・Note公開）の**第4回**の本文を書いてください。
+
+## 講座の性格
+
+- 読者は Python を書ける初学者。フレームワークは使わず、標準ライブラリだけで組む
+- 毎回、実際に手元のローカルモデル（gemma4:e4b）を走らせて、その挙動を観察する
+- 第1回=whileループ、第2回=道具を持たせる、第3回=道具を選ばせる、
+  第4回=ファイルという身体（読み書きと作業フォルダの関門）、まで済んでいる
+- 第4回のテーマは「ファイルという身体」
+
+## 構成（この順で、この見出しで書く。各節に何を入れるかも守る）
+
+- `## 前回の復習` — 第3回までを3〜4文で
+- `## ファイルに書くという身体` — なぜファイルが要るのか。跡が残らない困りごとから入る
+- `## 道具を3つ足す（ループは変わらない）` — **素材1から3つの道具の実装を貼る**
+- `## 関門：身体の範囲を決める` — **素材1から `safe_path` を貼る**
+- `## 実験：エージェントを走らせる` — **素材3から実験1・2・3のログをそのまま貼る**
+- `## お願いで守るか、構造で守るか` — **素材3の実験4a と 4b を並べて貼る**
+- `## まとめ` — 箇条書き4〜6項目
+- `## 練習問題` — **5問**
+- `### 解答例` — 5問すべてに答える
+
+## 分量とコードの扱い
+
+- 本文は**6,000字程度**。各節を1段落で済ませない
+- コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。
+  長い部分は関係する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする
+
+## 絶対の禁止
+
+**実行結果を自分で書かないこと。** 下に渡した実測ログに無い出力・エラー文・
+モデルの回答を、本文に書いてはいけません。ログを引用するときは渡されたものを
+そのまま使い、そこで何が起きたかの説明を足してください。
+渡していない実験を「やってみました」と書くのも禁止です。
+
+## 文体（守ること）
+
+- 句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）
+- 一文は60字を目安、長くても100字まで。接続を重ねない
+- 英単語を地の文に生で混ぜない。訳語かカタカナにする
+  （例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）
+- 敬体（です・ます）で統一する。同じ文末を3回続けない
+- 各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない
+- コードを見せたら、それが何をしているかを日常語で1文添える
+- 数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）
+- 根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない
+- 節を「重要です」で締めない。何がどう重要かを書く
+- **「素材1」「素材2」という言葉を本文に書かない。**読者はこの指示書を読んでいない
+
+## 素材1: 本文に載せるコード（`code/04_file_agent.py`）
+```python
+"""第4回: 完成品 — ファイルを読み書きできるエージェント（作業フォルダの中だけ）
+
+使い方:  python3 04_file_agent.py "メモ帳に今日の予定を3つ書いて"
+
+第3回との差は道具だけ。ループは1行も変わっていない。
+新しいのは「道具が外の世界を書き換える」ことと、その範囲を縛る仕組み。
+"""
+import json
+import os
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 8
+
+# エージェントに与える身体の範囲。ここから外へは手が届かない
+WORKDIR = Path(__file__).resolve().parent / "workspace"
+WORKDIR.mkdir(exist_ok=True)
+
+# ---------- 身体の範囲を決める関門 ----------
+
+def safe_path(name):
+    """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+    ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+    resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+    シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+    """
+    target = (WORKDIR / name).resolve()
+    if not target.is_relative_to(WORKDIR):
+        raise ValueError(f"作業フォルダの外は触れません: {name}")
+    return target
+
+
+# ---------- 道具の実装（厨房） ----------
+
+def list_files():
+    names = sorted(p.name for p in WORKDIR.iterdir() if p.is_file())
+    return "\n".join(names) if names else "（空です）"
+
+
+def read_file(name):
+    path = safe_path(name)
+    if not path.exists():
+        return f"エラー: {name} はありません"
+    return path.read_text(encoding="utf-8")
+
+
+def write_file(name, content):
+    path = safe_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return f"{name} に {len(content)} 文字を書きました"
+
+
+TOOLS_IMPL = {"list_files": list_files, "read_file": read_file, "write_file": write_file}
+
+# ---------- 道具の説明書（メニュー） ----------
+
+TOOLS_SPEC = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "作業フォルダにあるファイル名の一覧を返す",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "作業フォルダのファイルを読んで中身を返す",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"}
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "作業フォルダのファイルに書き込む。既にあれば上書きする",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"},
+                    "content": {"type": "string", "description": "書き込む本文"},
+                },
+                "required": ["name", "content"],
+            },
+        },
+    },
+]
+
+# ---------- エージェント本体（第3回と同じ） ----------
+
+def chat(messages):
+    payload = {"model": MODEL, "messages": messages,
+               "tools": TOOLS_SPEC, "stream": False}
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+# 「お願い」で守る層。環境変数で差し替えられるようにしてあるのは、
+# これを外すと何が起きるかを第4回で実際に見るため
+SYSTEM = os.environ.get(
+    "AGENT_SYSTEM",
+    "あなたはファイル操作ができるアシスタントです。作業フォルダの中だけで作業してください。",
+)
+
+
+def run_agent(user_input):
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": user_input},
+    ]
+    for _ in range(MAX_ROUNDS):
+        msg = chat(messages)
+        messages.append(msg)
+        if not msg.get("tool_calls"):
+            return msg["content"]
+        for call in msg["tool_calls"]:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            print(f"[ツール実行] {name}({args})")
+            try:
+                result = TOOLS_IMPL[name](**args)
+            except Exception as e:
+                result = f"エラー: {e}"
+            print(f"[結果] {result}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り：ツール使用が上限に達しました）"
+
+
+if __name__ == "__main__":
+    question = sys.argv[1] if len(sys.argv) > 1 else "作業フォルダに何がある？"
+    print("最終回答:", run_agent(question))
+```
+## 素材2: 関門の単体テスト（`code/04_path_guard_test.py`）
+```python
+"""第4回: 関門 safe_path の単体テスト。
+
+エージェントを走らせなくても、身体の範囲が正しいかはここで確かめられる。
+本文で「パス制限はこう設計する」と書く以上、その主張は機械で検証できる形にしておく。
+"""
+import importlib.util
+import sys
+from pathlib import Path
+
+# ファイル名が数字で始まるので普通の import は使えない。パス指定で読み込む
+spec = importlib.util.spec_from_file_location(
+    "file_agent", Path(__file__).resolve().parent / "04_file_agent.py")
+fa = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fa)
+
+OK = "通った"
+NG = "落ちた"
+
+
+def allowed(name):
+    """関門を通るべきもの。"""
+    try:
+        fa.safe_path(name)
+        return True
+    except ValueError:
+        return False
+
+
+def main():
+    通すべき = ["memo.txt", "notes/today.txt", "./memo.txt", "a/../memo.txt"]
+    弾くべき = ["../secret.txt", "../../etc/passwd", "/etc/passwd",
+                "notes/../../outside.txt"]
+
+    失敗 = []
+    for name in 通すべき:
+        got = allowed(name)
+        print(f"  通すべき {name!r:28} → {OK if got else NG}")
+        if not got:
+            失敗.append(f"通すべき {name} が弾かれた")
+    for name in 弾くべき:
+        got = allowed(name)
+        print(f"  弾くべき {name!r:28} → {NG if not got else OK}")
+        if got:
+            失敗.append(f"弾くべき {name} が通ってしまった")
+
+    print()
+    if 失敗:
+        for f in 失敗:
+            print("NG:", f)
+        sys.exit(1)
+    print(f"全{len(通すべき) + len(弾くべき)}件 合格")
+
+
+if __name__ == "__main__":
+    main()
+```
+## 素材3: 実測ログ（これが唯一の実行結果。ここに無いものは書かない）
+```
+== 実験1: 道具の下見（空のフォルダ） ==
+=== $ python3 04_file_agent.py "作業フォルダに何がある？"
+[ツール実行] list_files({})
+[結果] （空です）
+最終回答: 作業フォルダは空です。
+
+== 実験2: 書く ==
+=== $ python3 04_file_agent.py "memo.txt に、次の3つを箇条書きで書いて。牛乳を買う／第4回の原稿を書く／30分歩く"
+[ツール実行] write_file({'content': '* 牛乳を買う\n* 第4回の原稿を書く\n* 30分歩く', 'name': 'memo.txt'})
+[結果] memo.txt に 27 文字を書きました
+最終回答: `memo.txt` に以下の内容を書き込みました。
+
+* 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+
+== 実験3: 読んで加工する（2手が要る） ==
+=== $ python3 04_file_agent.py "memo.txt を読んで、2番目の項目だけ教えて"
+[ツール実行] read_file({'name': 'memo.txt'})
+[結果] * 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+最終回答: 「第4回の原稿を書く」です。
+
+== 実験4a: 身体の外へ（システムプロンプトの「お願い」あり） ==
+=== $ python3 04_file_agent.py "../secret.txt というファイルを読んで中身を教えて"
+最終回答: 申し訳ありませんが、私は作業フォルダ内にあるファイルのみを扱うことができ、「../secret.txt」のように作業フォルダの外側にあるファイルを読むことはできません。
+
+== 実験4b: お願いを外す（関門だけで守る） ==
+=== $ AGENT_SYSTEM='あなたは有能なアシスタントです。' python3 04_file_agent.py "../secret.txt を読んで中身を教えて"
+[ツール実行] read_file({'name': '../secret.txt'})
+[結果] エラー: 作業フォルダの外は触れません: ../secret.txt
+最終回答: ご指定のファイル `../secret.txt` は、現在アクセス可能な作業フォルダの外に存在するため、読み込むことができませんでした。システム上のセキュリティ制限により、作業ディレクトリの外のファイルにアクセスすることはできませんので、ご了承ください。
+
+作業フォルダ内にあるファイルであれば読み込みが可能です。
+
+== 関門の単体テスト ==
+  通すべき 'memo.txt'                   → 通った
+  通すべき 'notes/today.txt'            → 通った
+  通すべき './memo.txt'                 → 通った
+  通すべき 'a/../memo.txt'              → 通った
+  弾くべき '../secret.txt'              → 落ちた
+  弾くべき '../../etc/passwd'           → 落ちた
+  弾くべき '/etc/passwd'                → 落ちた
+  弾くべき 'notes/../../outside.txt'    → 落ちた
+
+全8件 合格
+== 走行後の作業フォルダ ==
+total 8
+drwxr-xr-x@  3 user  staff   96 Aug 20 22:19 .
+drwxr-xr-x@ 13 user  staff  416 Aug 20 22:19 ..
+-rw-r--r--@  1 user  staff   59 Aug 20 22:19 memo.txt
+--- memo.txt の中身 ---
+* 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+```
+## 出力の形式
+
+**下書きを書かないでください。** 1文字目を <<<SECTION>>> にし、最後に <<<END>>> を置きます。
+この2つのマーカーの間だけが提出物です。
+
+<<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第4回 — （続きを書く）
+
+（ここに本文をMarkdownで。上の構成の見出しを順に）
+<<<END>>>

@@ -1,0 +1,276 @@
+あなたは、プログラミング教材の書き手です。
+「LLMエージェント自作講座」（全12回・日本語・Note公開）の**第12回**の本文を書いてください。
+
+## 講座の性格
+
+- 読者は Python を書ける初学者。フレームワークは使わず、標準ライブラリだけで組む
+- 毎回、実際に手元のローカルモデル（gemma4:e4b）を走らせて、その挙動を観察する
+- 第1回=whileループ、第2回=道具を持たせる、第3回=道具を選ばせる、
+  第4回=ファイルという身体（読み書きと作業フォルダの関門）、まで済んでいる
+- 第12回のテーマは「卒業制作　当直エージェント」
+
+## 構成（この順で、この見出しで書く。各節に何を入れるかも守る）
+
+- `## これまでの11回で手に入れたもの` — 各回の道具を1行ずつ振り返る
+- `## 当直エージェントとは何をするか` — 仕様を先に決める。困りごとから入る
+- `## 組み上げる` — **素材1から本体を貼る**。第4〜11回のどの部品を使ったかを対応づける
+- `## 実験：一晩ぶんを走らせる` — **素材2のログをそのまま貼り**、日報の中身を分解する
+- `## ここから先へ` — 実測で見えた限界と、読者が次に足せるもの
+- `## まとめ` — 箇条書き4〜6項目
+- `## 練習問題` — **5問**。うち2問はコードを書かせず理由を説明させる問い
+- `### 解答例` — 5問すべてに答える
+
+
+## 分量とコードの扱い
+
+- 本文は**6,000字程度**。各節を1段落で済ませない
+- コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。
+  長い部分は関係する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする
+
+## 絶対の禁止
+
+**実行結果を自分で書かないこと。** 下に渡した実測ログに無い出力・エラー文・
+モデルの回答を、本文に書いてはいけません。ログを引用するときは渡されたものを
+そのまま使い、そこで何が起きたかの説明を足してください。
+渡していない実験を「やってみました」と書くのも禁止です。
+
+## 文体（守ること）
+
+- 句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）
+- 一文は60字を目安、長くても100字まで。接続を重ねない
+- 英単語を地の文に生で混ぜない。訳語かカタカナにする
+  （例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）
+- 敬体（です・ます）で統一する。同じ文末を3回続けない
+- 各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない
+- コードを見せたら、それが何をしているかを日常語で1文添える
+- 数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）
+- 根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない
+- 節を「重要です」で締めない。何がどう重要かを書く
+- **「素材1」「素材2」という言葉を本文に書かない。**読者はこの指示書を読んでいない
+
+## 素材1: 本文に載せるコード（`code/12_watch.py`。この通りに引用すること）
+```python
+"""第12回: 卒業制作 — フォルダを見張って日報を書く当直エージェント
+
+使い方:  python3 12_watch.py --once      （1回だけ見回って日報を書く）
+         python3 12_watch.py --demo      （変化を作ってから見回る。教材用）
+
+これまでの部品をそのまま使う。
+第4回=ファイルの読み書きと関門 / 第5回=安全装置 / 第6回=足跡 / 第7回=長期記憶。
+新しく書くのは「前回との差を取る」ところだけです。
+"""
+import datetime
+import hashlib
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+
+HERE = Path(__file__).resolve().parent
+WATCH_DIR = HERE / "watched"          # 見張る対象（第4回の作業フォルダと同じ考え方）
+STATE_PATH = HERE / "watch_state.json"  # 前回の姿を覚えておく場所
+REPORT_PATH = HERE / "watch_report.md"  # 日報の置き場
+TRACE_PATH = HERE / "watch_trace.jsonl"
+
+
+def trace(kind, **fields):
+    """第6回の足跡。当直は無人で回すので、足跡が無いと後から何も分からない。"""
+    rec = {"t": datetime.datetime.now().strftime("%H:%M:%S"), "kind": kind}
+    rec.update(fields)
+    with TRACE_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def safe_path(name):
+    """第4回の関門。当直でも身体の範囲は変わらない。"""
+    target = (WATCH_DIR / name).resolve()
+    if not target.is_relative_to(WATCH_DIR):
+        raise ValueError(f"見張り対象の外です: {name}")
+    return target
+
+
+# ---------- 前回との差を取る ----------
+
+def snapshot():
+    """いまのフォルダの姿を「名前 → 中身の指紋と大きさ」で写し取る。
+
+    中身の指紋（ハッシュ）まで見るのは、更新日時だけだと
+    「開いて保存しただけ」も変更に見えてしまうためです。
+    """
+    shot = {}
+    for p in sorted(WATCH_DIR.rglob("*")):
+        if p.is_file():
+            data = p.read_bytes()
+            shot[str(p.relative_to(WATCH_DIR))] = {
+                "size": len(data),
+                "hash": hashlib.sha256(data).hexdigest()[:12],
+            }
+    return shot
+
+
+def diff(old, new):
+    added = [k for k in new if k not in old]
+    removed = [k for k in old if k not in new]
+    changed = [k for k in new if k in old and new[k]["hash"] != old[k]["hash"]]
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def load_state():
+    if STATE_PATH.exists():
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_state(shot):
+    STATE_PATH.write_text(json.dumps(shot, ensure_ascii=False, indent=1),
+                          encoding="utf-8")
+
+
+# ---------- 日報を書かせる ----------
+
+def summarize(changes, samples):
+    """差分と、変わったファイルの冒頭だけをモデルに渡して短くまとめさせる。
+
+    **判断の材料はこちらが集める。** モデルにフォルダを歩かせない。
+    歩かせないので、見ていないものを見たと書くことができません。
+    """
+    facts = [f"追加 {len(changes['added'])}件: {changes['added']}",
+             f"変更 {len(changes['changed'])}件: {changes['changed']}",
+             f"削除 {len(changes['removed'])}件: {changes['removed']}"]
+    for name, head in samples.items():
+        facts.append(f"--- {name} の冒頭\n{head}")
+    payload = {"model": MODEL, "stream": False, "messages": [
+        {"role": "system", "content":
+         "あなたは当直の記録係です。渡された事実だけを使って、"
+         "3行以内の日本語で日報を書いてください。推測を足さないでください。"},
+        {"role": "user", "content": "\n".join(facts)},
+    ]}
+    req = urllib.request.Request(
+        OLLAMA_URL, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]["content"].strip()
+
+
+def patrol():
+    WATCH_DIR.mkdir(exist_ok=True)
+    trace("patrol_start", dir=str(WATCH_DIR.name))
+    old = load_state()
+    new = snapshot()
+    changes = diff(old, new)
+    n = sum(len(v) for v in changes.values())
+    trace("diff", **{k: len(v) for k, v in changes.items()})
+    print(f"[見回り] 追加{len(changes['added'])} / 変更{len(changes['changed'])}"
+          f" / 削除{len(changes['removed'])}")
+
+    if n == 0:
+        save_state(new)
+        trace("patrol_end", wrote=False)
+        print("[日報] 変化なし。書くことがないので書きません")
+        return None
+
+    samples = {}
+    for name in (changes["added"] + changes["changed"])[:3]:
+        try:
+            samples[name] = safe_path(name).read_text(encoding="utf-8")[:200]
+        except Exception as e:
+            samples[name] = f"（読めません: {e}）"
+
+    report = summarize(changes, samples)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    with REPORT_PATH.open("a", encoding="utf-8") as f:
+        f.write(f"\n## {stamp}\n\n{report}\n")
+    save_state(new)
+    trace("patrol_end", wrote=True, chars=len(report))
+    print(f"[日報]\n{report}")
+    return report
+
+
+def demo():
+    """教材用に、変化を作ってから見回る。無人の一晩を早回しで再現する。"""
+    WATCH_DIR.mkdir(exist_ok=True)
+    for p in (STATE_PATH, REPORT_PATH, TRACE_PATH):
+        p.unlink(missing_ok=True)
+    for p in WATCH_DIR.rglob("*"):
+        if p.is_file():
+            p.unlink()
+
+    print("--- 1回目: 初回（全部が新規に見える）")
+    (WATCH_DIR / "todo.md").write_text("- 原稿を書く\n- 買い物\n", encoding="utf-8")
+    (WATCH_DIR / "log.txt").write_text("起動しました\n", encoding="utf-8")
+    patrol()
+
+    print("\n--- 2回目: 何も触らずに見回る")
+    patrol()
+
+    print("\n--- 3回目: 1件変更・1件追加してから見回る")
+    (WATCH_DIR / "log.txt").write_text("起動しました\nエラーが1件出ました\n",
+                                       encoding="utf-8")
+    (WATCH_DIR / "memo.txt").write_text("明日の予定を決める\n", encoding="utf-8")
+    patrol()
+
+    print("\n--- 足跡")
+    print(TRACE_PATH.read_text(encoding="utf-8").rstrip())
+
+
+if __name__ == "__main__":
+    if "--demo" in sys.argv:
+        demo()
+    else:
+        patrol()
+```
+## 素材2: 実測ログ（これが唯一の実行結果。ここに無いものは書かない）
+```
+=== $ python3 12_watch.py --demo
+--- 1回目: 初回（全部が新規に見える）
+[見回り] 追加2 / 変更0 / 削除0
+[日報]
+ログファイルが追加され、起動の記録がなされました。
+また、ToDoリストとして「原稿を書く」「買い物」が追記されました。
+
+--- 2回目: 何も触らずに見回る
+[見回り] 追加0 / 変更0 / 削除0
+[日報] 変化なし。書くことがないので書きません
+
+--- 3回目: 1件変更・1件追加してから見回る
+[見回り] 追加1 / 変更1 / 削除0
+[日報]
+ログファイル（log.txt）が更新され、起動およびエラーが1件発生したことが記録されました。
+また、明日の予定を決めるためのメモ（memo.txt）が追記されています。
+
+--- 足跡
+{"t": "00:55:24", "kind": "patrol_start", "dir": "watched"}
+{"t": "00:55:24", "kind": "diff", "added": 2, "removed": 0, "changed": 0}
+{"t": "00:55:30", "kind": "patrol_end", "wrote": true, "chars": 60}
+{"t": "00:55:30", "kind": "patrol_start", "dir": "watched"}
+{"t": "00:55:30", "kind": "diff", "added": 0, "removed": 0, "changed": 0}
+{"t": "00:55:30", "kind": "patrol_end", "wrote": false}
+{"t": "00:55:30", "kind": "patrol_start", "dir": "watched"}
+{"t": "00:55:30", "kind": "diff", "added": 1, "removed": 0, "changed": 1}
+{"t": "00:55:36", "kind": "patrol_end", "wrote": true, "chars": 85}
+
+== 日報ファイルの中身 ==
+
+## 2026-08-21 00:55
+
+ログファイルが追加され、起動の記録がなされました。
+また、ToDoリストとして「原稿を書く」「買い物」が追記されました。
+
+## 2026-08-21 00:55
+
+ログファイル（log.txt）が更新され、起動およびエラーが1件発生したことが記録されました。
+また、明日の予定を決めるためのメモ（memo.txt）が追記されています。
+```
+## 出力の形式
+
+**下書きを書かないでください。** 1文字目を <<<SECTION>>> にし、最後に <<<END>>> を置きます。
+この2つのマーカーの間だけが提出物です。
+
+<<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第12回 — （続きを書く）
+
+（ここに本文をMarkdownで。上の構成の見出しを順に）
+<<<END>>>

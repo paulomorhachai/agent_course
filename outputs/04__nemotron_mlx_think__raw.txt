@@ -1,0 +1,806 @@
+Here's a thinking process:
+
+1.  **Analyze User Input:**
+   - Role: Programming materials writer
+   - Task: Write the 4th session of "LLM Agent Self-Creation Course" (12 sessions, Japanese, Note published)
+   - Session 4 content specified with strict structure and constraints
+   - Must use provided materials exactly (code, test logs)
+   - Forbidden: Writing execution results myself, altering code, adding unsourced content
+   - Output format: `<<<SECTION>>>` ... `<<<END>>>` only
+   - Strict style rules: Japanese punctuation, sentence length, no mixing English in body, etc.
+
+2.  **Deconstruct the Required Structure:**
+   - `## 前回の復習` — 3〜4 sentences recapping Session 3
+   - `## ファイルに書くという身体` — Why files are needed, start from a problem that leaves no trace
+   - `## 道具を3つ足す（ループは変わらない）` — Implement `list_files`, `read_file`, `write_file` with `TOOLS_SPEC`. Show loop unchanged.
+   - `## 関門：身体の範囲を決める` — `safe_path`. Explain `resolve()` before checking. Include `material2` unit test results.
+   - `## 実験：エージェントを走らせる` — `material3` experiment logs 1, 2, 3. Decompose what happened each.
+   - `## お願いで守るか、構造で守るか` — `material3` experiment 4a and 4b side-by-side. Explain the difference.
+   - `## まとめ` — 4-6 bullet points
+   - `## 練習問題` — 5 questions. 2 must be "code-free, explanation-only"
+   - `### 解答例` — All 5 questions answered
+   - Word count: ~6,000 chars (I'll aim for substantial but natural length, not artificially inflated)
+   - Code: Must copy-paste exactly from `material1`. No rewriting.
+   - Prohibitions: No making up execution results. No "I tried this" for unsourced experiments. Must use material logs as-is.
+   - Style: Full-width punctuation `、、。`. Sentences ≤60 chars, max 100. No mixing English in body (except Python, Ollama, JSON, etc. as identifiers). Keigo desu/masu. No "重要です" closing. Must explain "what happens if this doesn't exist" at start of each section. List all items when counting. No arbitrary threshold numbers.
+
+3.  **Check Material Compliance:**
+   - `material1`: `04_file_agent.py` - I'll copy the exact code. Must not change a single character.
+   - `material2`: `04_path_guard_test.py` - Unit test results. I'll paste the output log exactly.
+   - `material3`: Real experiment logs. I'll copy experiment 1, 2, 3 logs, then 4a and 4b exactly as given.
+
+   Important: I must ensure the code block in `## 道具を3つ足す...` is exactly `material1`. The `TOOLS_SPEC`, `safe_path`, `list_files`, `read_file`, `write_file` must appear exactly as in `material1`. I'll paste the whole file or the relevant part, but the user says: "Code is just quoted as-is from material. Don't rewrite or pseudo-code. Long parts can be extracted but must be exactly the same as material." I'll include the full `material1` code block since it's the "completed agent" for Session 4. But I need to be careful: the structure says "`## 道具を3つ足す（ループは変わらない）` — **素材1から `list_files` `read_file` `write_file` の実装と `TOOLS_SPEC` を貼る**。ループが変わっていないことを示す". So I need to paste the implementation parts. I'll paste the entire `material1` code block because it's concise and contains all needed tools. But I must ensure it's exact.
+
+   For `## 関門：身体の範囲を決める`: I need `safe_path` and the unit test results from `material2`. I'll paste the test output log exactly.
+
+   For `## 実験：エージェントを走らせる`: I need `material3` experiments 1, 2, 3 logs. Then `## お願いで守るか、構造で守るか`: experiments 4a and 4b side-by-side.
+
+   I need to structure each section with the required content, explain things in daily language, avoid forbidden patterns.
+
+   Let's plan the content section by section, ensuring I adhere to all constraints.
+
+   **Section: `## 前回の復習`**
+   - Recap Session 3: tools for looping, letting the agent choose tools, etc. Keep it 3-4 sentences. Use daily language. Mention that we've given the agent ways to interact with the outside, but now we're focusing on file I/O as the agent's "body".
+
+   **Section: `## ファイルに書くという身体`**
+   - Why files? Start from a problem: without a record, work is lost, can't accumulate knowledge, can't share results. Explain that a file is a minimal "body" that leaves a trace. Keep it to 1-2 paragraphs, first sentence explains the problem of no trace.
+
+   **Section: `## 道具を3つ足す（ループは変わらない`** 
+   - Paste `material1` code block exactly. After pasting, add a sentence: "ループは1行も書き換えていない。前回のループ構造 `for _ in range(MAX_ROUNDS)` のままです。" But wait, the user says: "コードを見せたら、それが何をしているかを日常語で1文添える". So after the code block, I need a sentence explaining what the code block does, focusing on the tools added. Also: "数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）". The code block already has the 3 tools. I'll make sure to note that.
+
+   Actually, re-reading constraints carefully: 
+   - "コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。長い部分は関連する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする"
+   - So I can extract parts, but must be exact. I'll likely paste the whole `material1` since it's the "completed agent" and it's short. But the section heading says "`## 道具を3つ足す（ループは変わらない）` — **素材1から `list_files` `read_file` `write_file` の実装と `TOOLS_SPEC` を貼る**。ループが変わっていないことを示す". I'll paste the entire `material1` code block. It includes the loop, tools, etc. I'll add a daily-language sentence after it, but must ensure the code itself is unchanged.
+
+   Wait, there's a strong constraint: "コードを見せたら、それが何をしているかを日常語で1文添える". So I'll add one sentence after the code block explaining it.
+
+   Also: "句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）". So in my Japanese text, I must use full-width punctuation. In code blocks, half-angle is fine. I must remember this for all my text.
+
+   "一文は60字を目安、長くても100字まで。接続を重ねない". I'll keep sentences short.
+
+   "英単語を地の文に生で混ぜない。訳語かカタカナにする（例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）". So I can use Python, Ollama, JSON, etc. but not plain English words like "loop", "tool", etc. in my Japanese narrative. I'll translate or use katakana. Actually, "LLM/API/JSON" are allowed as abbreviations. "Python, Ollama" are proper nouns. I'll be careful.
+
+   "敬体（です・ます）で統一する。同じ文末を3回続けない". I'll use desu/masu. Avoid repeating the same ending 3 times in a row.
+
+   "各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない". So each section must start with a problem statement, not a definition.
+
+   "コードを見せたら、それが何をしているかを日常語で1文添える". After code blocks.
+
+   "数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）". If I say "3 tools", I must show all 3.
+
+   "根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない". No made-up stats.
+
+   "節を「重要です」で締めない。何がどう重要かを書く". No "重要です" closing.
+
+   Now, let's structure each section carefully.
+
+   I'll write the content in Japanese, using full-width punctuation. I'll ensure the code blocks are exact copies from `material1` and `material2` and `material3`.
+
+   Let's outline the full text:
+
+   ```
+   <<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第4回 — ファイルという身体の獲得
+
+## 前回の復習
+第3回までは、エージェントにループを回し、道具を持たせ、どの道具を選ばせるかを学んできました。前回の最後は、エージェントに複数の道具を提示し、状況に応じて適切なものを選ばせるところまででした。今回は、その選択肢に「ファイルの読み書き」を加えます。ファイル操作は、エージェントにとって作業の痕跡を残し、状態を保持するための基本的な身体となります。
+
+## ファイルに書くという身体
+エージェントにとってファイルがないと、その場限りの会話しか残せず、作業がリセットされてしまいます。過去の結果を引き継げず、同じ質問を繰り返すことになりかねません。ファイルに書くことは、エージェントに「記憶」の機能を与え、作業の継続性を生みます。跡が残らない困りごとは、やり取りが記憶されず、せっかくの成果が次の機会に生かせない点です。
+
+## 道具を3つ足す（ループは変わらない）
+以下は、第4回のエージェント完成品です。ループ構造は第3回と全く同じで、 `for _ in range(MAX_ROUNDS)` １行も変えていません。新たに加わったのは `list_files` `read_file` `write_file` の3つの道具実装と、それらを記述する `TOOLS_SPEC` です。コードは素材1からそのまま貼り付けています。
+
+```python
+"""第4回: 完成品 — ファイルを読み書きできるエージェント（作業フォルダの中だけ）
+
+使い方:  python3 04_file_agent.py "メモ帳に今日の予定を3つ書いて"
+
+第3回との差は道具だけ。ループは1行も変わっていない。
+新しいのは「道具が外の世界を書き換える」ことと、その範囲を縛る仕組み。
+"""
+import json
+import os
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 8
+
+# エージェントに与える身体の範囲。ここから外へは手が届かない
+WORKDIR = Path(__file__).resolve().parent / "workspace"
+WORKDIR.mkdir(exist_ok=True)
+
+# ---------- 身体の範囲を決める関門 ----------
+
+def safe_path(name):
+    """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+    ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+    resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+    シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+    """
+    target = (WORKDIR / name).resolve()
+    if not target.is_relative_to(WORKDIR):
+        raise ValueError(f"作業フォルダの外は触れません: {name}")
+    return target
+
+
+# ---------- 道具の実装（厨房） ----------
+
+def list_files():
+    names = sorted(p.name for p in WORKDIR.iterdir() if p.is_file())
+    return "\n".join(names) if names else "（空です）"
+
+
+def read_file(name):
+    path = safe_path(name)
+    if not path.exists():
+        return f"エラー: {name} はありません"
+    return path.read_text(encoding="utf-8")
+
+
+def write_file(name, content):
+    path = safe_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return f"{name} に {len(content)} 文字を書きました"
+
+
+TOOLS_IMPL = {"list_files": list_files, "read_file": read_file, "write_file": write_file}
+
+# ---------- 道具の説明書（メニュー） ----------
+
+TOOLS_SPEC = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "作業フォルダにあるファイル名の一覧を返す",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "作業フォルダのファイルを読んで中身を返す",
+            "parameters": {
+                "type": "object": "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"}
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "作業フォルダのファイルに書き込む。既にあれば上書きする",
+            "parameters": {
+                "type": "object", "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"},
+                    "content": {"type": "string", "description": "書き込む本文"},
+                },
+                "required": ["name", "content"],
+            },
+        },
+    },
+]
+
+# ---------- エージェント本体（第3回と同じ） ----------
+
+def chat(messages):
+    payload = {"model": MODEL, "messages": messages,
+               "tools": TOOLS_SPEC, "stream": False}
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+# 「お願い」で守る層。環境変数で差し替えられるようにしてあるのは、
+# これを外すと何が起きるかを第4回で実際に見るため
+SYSTEM = os.environ.get(
+    "AGENT_SYSTEM",
+    "あなたはファイル操作ができるアシスタントです。作業フォルダの中だけで作業してください。",
+)
+
+
+def run_agent(user_input):
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": user_input},
+    ]
+    for _ in range(MAX_ROUNDS):
+        msg = chat(messages)
+        messages.append(msg)
+        if not msg.get("tool_calls"):
+            return msg["content"]
+        for call in msg["tool_calls"]:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            print(f"[ツール実行] {name}({args})")
+            try:
+                result = TOOLS_IMPL[name](**args)
+            except Exception as e:
+                result = f"エラー: {e}"
+            print(f"[結果] {result}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り：ツール使用が上限に達しました）"
+
+
+if __name__ == "__main__":
+    question = sys.argv[1] if len(sys.argv) > 1 else "作業フォルダに何がある？"
+    print("最終回答:", run_agent(question))
+```
+```
+
+   Wait, I need to check the `material1` code exactly. Looking at `material1` in the prompt:
+
+   ```python
+   """第4回: 完成品 — ファイルを読み書きできるエージェント（作業フォルダの中だけ）
+
+   使い方:  python3 04_file_agent.py "メモ帳に今日の予定を3つ書いて"
+
+   第3回との差は道具だけ。ループは1行も変わっていない。
+   新しいのは「道具が外の世界を書き換える」ことと、その範囲を縛る仕組み。
+   """
+   import json
+   import os
+   import sys
+   import urllib.request
+   from pathlib import Path
+
+   MODEL = "gemma4:e4b"
+   OLLAMA_URL = "http://localhost:11434/api/chat"
+   MAX_ROUNDS = 8
+
+   # エージェントに与える身体の範囲。ここから外へは手が届かない
+   WORKDIR = Path(__file__).resolve().parent / "workspace"
+   WORKDIR.mkdir(exist_ok=True)
+
+   # ---------- 身体の範囲を決める関門 ----------
+
+   def safe_path(name):
+       """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+       ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+       resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+       シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+       """
+       target = (WORKDIR / name).resolve()
+       if not target.is_relative_to(WORKDIR):
+           raise ValueError(f"作業フォルダの外は触れません: {name}")
+       return target
+
+
+   # ---------- 道具の実装（厨房） ----------
+
+   def list_files():
+       names = sorted(p.name for p in WORKDIR.iterdir() if p.is_file())
+       return "\n".join(names) if names else "（空です）"
+
+
+   def read_file(name):
+       path = safe_path(name)
+       if not path.exists():
+           return f"エラー: {name} はありません"
+       return path.read_text(encoding="utf-8")
+
+
+   def write_file(name, content):
+       path = safe_path(name)
+       path.parent.mkdir(parents=True, exist_ok=True)
+       path.write_text(content, encoding="utf-8")
+       return f"{name} に {len(content)} 文字を書きました"
+
+
+   TOOLS_IMPL = {"list_files": list_files, "read_file": read_file, "write_file": write_file}
+
+   # ---------- 道具の説明書（メニュー） ----------
+
+   TOOLS_SPEC = [
+       {
+           "type": "function",
+           "function": {
+               "name": "list_files",
+               "description": "作業フォルダにあるファイル名の一覧を返す",
+               "parameters": {"type": "object", "properties": {}},
+           },
+       },
+       {
+           "type": "function",
+           "function": {
+               "name": "read_file",
+               "description": "作業フォルダのファイルを読んで中身を返す",
+               "parameters": {
+                   "type": "object",
+                   "properties": {
+                       "name": {"type": "string", "description": "ファイル名。例: memo.txt"}
+                   },
+                   "required": ["name"],
+               },
+           },
+       },
+       {
+           "type": "function",
+           "function": {
+               "name": "write_file",
+               "description": "作業フォルダのファイルに書き込む。既にあれば上書きする",
+               "parameters": {
+                   "type": "object",
+                   "properties": {
+                       "name": {"type": "string", "description": "ファイル名。例: memo.txt"},
+                       "content": {"type": "string", "description": "書き込む本文"},
+                   },
+                   "required": ["name", "content"],
+               },
+           },
+       },
+   ]
+
+   # ---------- エージェント本体（第3回と同じ） ----------
+
+   def chat(messages):
+       payload = {"model": MODEL, "messages": messages,
+                  "tools": TOOLS_SPEC, "stream": False}
+       req = urllib.request.Request(
+           OLLAMA_URL,
+           data=json.dumps(payload).encode("utf-8"),
+           headers={"Content-Type": "application/json"},
+       )
+       with urllib.request.urlopen(req) as res:
+           return json.load(res)["message"]
+
+
+   # 「お願い」で守る層。環境変数で差し替えられるようにしてあるのは、
+   # これを外すと何が起きるかを第4回で実際に見るため
+   SYSTEM = os.environ.get(
+       "AGENT_SYSTEM",
+       "あなたはファイル操作ができるアシスタントです。作業フォルダの中だけで作業してください。",
+   )
+
+
+   def run_agent(user_input):
+       messages = [
+           {"role": "system", "content": SYSTEM},
+           {"role": "user", "content": user_input},
+       ]
+       for _ in range(MAX_ROUNDS):
+           msg = chat(messages)
+           messages.append(msg)
+           if not msg.get("tool_calls"):
+               return msg["content"]
+           for call in msg["tool_calls"]:
+               name = call["function"]["name"]
+               args = call["function"]["arguments"]
+               print(f"[ツール実行] {name}({args})")
+               try:
+                   result = TOOLS_IMPL[name](**args)
+               except Exception as e:
+                   result = f"エラー: {e}"
+               print(f"[結果] {result}")
+               messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+       return "（打ち切り：ツール使用が上限に達しました）"
+
+
+   if __name__ == "__main__":
+       question = sys.argv[1] if len(sys.argv) > 1 else "作業フォルダに何がある？"
+       print("最終回答:", run_agent(question))
+   ```
+
+   I notice in `material1`, the `read_file` `parameters` property has a typo in my earlier pasting: `"type": "object": "properties"` should be `"type": "object", "properties"`. I must copy exactly. Let me check the exact `material1` text from the user prompt:
+
+   Looking at user's `material1`:
+   ```
+   {
+       "type": "function",
+       "function": {
+           "name": "read_file",
+           "description": "作業フォルダのファイルを読んで中身を返す",
+           "parameters": {
+               "type": "object",
+               "properties": {
+                   "name": {"type": "string", "description": "ファイル名。例: memo.txt"}
+               },
+               "required": ["name"],
+           },
+       },
+   },
+   ```
+   It has a comma after `"type": "object"`? Actually, looking closely: `"parameters": { "type": "object", "properties": { ... } }`. In the user's message, it's written as:
+   `"parameters": {`
+   `    "type": "object",`
+   `    "properties": {`
+   But wait, standard JSON schema for function parameters uses `{"type":"object","properties":{...}}`. The user's formatting might have a comma after "type": "object". I need to copy exactly as in the material. I'll just copy the entire block as-is, ensuring no modifications.
+
+   Let me re-read the user's `material1` code carefully. It's monolithic. I'll copy the whole thing between ```python ``` markers. I must ensure my output code block is identical. I'll be very careful.
+
+   Now, `## 関門：身体の範囲を決める`:
+   - Need `safe_path` implementation. I'll paste it from `material1` (it's already in the code block, but the section says "**素材1から `safe_path` を貼る**"). Actually, `safe_path` is already inside the `material1` code. But the section structure suggests I should highlight it. I can mention it's from material1, but the code block in the section might be the whole file again, or just the function. The user says: "コードは素材からそのまま貼る". I think for each section, I can paste relevant code, but must be exact. To be safe, I'll paste the entire `material1` code in the "道具を3つ足す" section, and in "関門" section, I might reference it or paste the `safe_path` part. But the user's structure says:
+   - `## 道具を3つ足す（ループは変わらない）` — **素材1から `list_files` `read_file` `write_file` の実装と `TOOLS_SPEC` を貼る**。ループが変わっていないことを示す
+   - `## 関門：身体の範囲を決める` — **素材1から `safe_path` を貼る**。 `resolve()` を先に呼ぶ理由を日常語で説明。**素材2の単体テストの結果も貼る**
+
+   So in "道具を3つ足す", I paste the implementations of `list_files`, `read_file`, `write_file`, and `TOOLS_SPEC`. In "関門", I paste `safe_path` and the unit test results from `material2`. But `safe_path` is already in `material1`. I could just paste the `safe_path` function from `material1`, but I must ensure it's exact. However, the user might expect that I don't duplicate the whole file unnecessarily, but the rule is "code is just quoted as-is from material. Don't rewrite". I can extract a function as long as it's one-to-one identical. I'll paste the `safe_path` function exactly as it appears in `material1`.
+
+   But wait, `material1` contains the whole file. If I extract `safe_path`, I need to output just that function. I'll do that.
+
+   For `## 実験：エージェントを走らせる`:
+   - **素材3から実験1・2・3のログをそのまま貼り**、 1つずつ何が起きたかを分解して説明する
+   So I'll copy-paste the exact experiment 1, 2, 3 logs from `material3`.
+
+   For `## お願いで守るか、構造で守るか`:
+   - **素材3の実験4a と 4b を並べて貼る**。 4aは道具を呼ばずに断り、4bは道具を呼んで関門が弾いた。この差が本題
+   I'll copy-paste experiment 4a and 4b logs side-by-side.
+
+   Then `## まとめ`: 4-6 bullet points.
+
+   `## 練習問題`: 5 questions. At least 2 must be "code-free, explanation-only". I'll design 5 questions, 2 of which are "explain in why without code". Then `### 解答例`: answer all 5.
+
+   Let's plan the questions:
+   1. Why does the agent need a working directory limit? (explanation)
+   2. What happens if `resolve()` is not called before checking the path? (explanation)
+   3. Write a code snippet that uses `write_file` to append a line to an existing file. (code)
+   4. Why does experiment 4a return a refusal while 4b returns an error? (explanation)
+   5. How does the `safe_path` function prevent access to `/etc/passwd`? (explanation)
+
+   But I need exactly 5 questions, and at least 2 must be code-free (reasons/explanations). I'll make questions 1, 2, 4, 5 be explanation-type (but only 2 need to be code-free; the others can be code or mixed, but the constraint says "うち2問はコードを書かせず理由を説明させる問い". So among the 5, 2 must be reason-explanation no code. The other 3 can be anything, but I'll keep them as short-answer or code, but to simplify, I'll make all 5 be either explanation or code, but ensure 2 are purely explanatory no code. Actually, the user says: "**5問**。うち2問はコードを書かせず理由を説明させる問い". So I must have exactly 5 questions, and 2 of them must be "explain reason, no code". The other 3 can be anything, but I'll probably make them short-answer or code-tracing. I'll design:
+   Q1: Explain why files are necessary for an agent's "body" (no code)
+   Q2: Explain the role of `resolve()` in `safe_path` (no code)
+   Q3: Write a function that lists files using `list_files` (code)
+   Q4: Compare experiment 4a and 4b, why the difference occurs (explanation, no code? Could be code but I'll make it explanation)
+   Q5: What would happen if `TOOLS_SPEC` was missing? (explanation)
+
+   But I need to be careful: the user says "うち2問はコードを書かせず理由を説明させる問い". So questions 1 and 2 could be the explanatory ones. Or I can label which are the no-code ones. I'll make Q1 and Q2 be the no-code explanation questions. Q3, Q4, Q5 can involve code or conceptual questions, but I'll keep them short. Actually, to be safe, I'll make all 5 be conceptual, but explicitly mark 2 as "no code, explain reason". The format: I'll list them as Q1 to Q5, and in the answer key, I'll answer all. The user says "### 解答例 — 5問すべてに答える". So I need to provide answers to all 5. I'll make Q1 and Q2 be the "no code, explain reason" type, and Q3, Q4, Q5 can be short code or explanation, but I'll ensure Q3 and Q5 maybe involve code snippets, and Q4 is about the experiment comparison. But I need to output the questions and then the answers. I'll design the questions clearly.
+
+   Let's draft the questions:
+   - Q1: ファイルの読み書きがエージェントにとってなぜ重要なのか、理由をコードを書かずに説明してください。
+   - Q2: `safe_path` 関数における `resolve()` の役割を、日常語で理由を説明してください。
+   - Q3: `write_file` 道具を使って、既存のファイルの末尾に新しい行を追加するコードを書いてください。
+   - Q4: 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。
+   - Q5: `TOOLS_SPEC` がなければエージェントは道具を選べないか、理由を説明してください。
+
+   But Q3 asks for code. That's fine, it's not one of the 2 no-code questions. Q4 is explanation. Q5 is explanation. That gives me 3 explanation questions (Q1, Q2, Q4, Q5) but only 2 are supposed to be "no code, explain reason". I can make Q3 a code-writing question, and Q4, Q5 also explanation but maybe they count as the 2 no-code? The constraint is "うち2問はコードを書かせず理由を説明させる問い". It doesn't strictly say the other 3 must involve code, but I need at least 2 that are no-code explanation. I'll make Q1 and Q2 be the mandatory no-code explanation questions. Q3, Q4, Q5 can be anything, but I'll make Q3 a code snippet, Q4 a comparison explanation (but I already have 2 no-code; I can make Q4 also explanation but then I'd have 4 explanation, which might violate "うち2問は..." if interpreted as "exactly 2 are no-code, the rest are not". Usually it means "at least 2 are no-code, and among the 5, 2 are of that type". I'll just make Q1 and Q2 explicitly "no code, explain reason", and Q3, Q4, Q5 I'll make them short-answer, possibly involving code references but not requiring code blocks. To be safe, I'll make Q3: "リスト `list_files` が返すフォーマットを説明してください（コードは不要です）", Q4: "実験1のログから、エージェントが `list_files` を呼んだ直後の状態はどうなりましたか？", Q5: " `write_file` 道具の `content` 引数に何を渡すべきか、その役割を簡潔に説明してください". But this is getting messy. I'll stick to a simple set:
+
+   Q1: ファイルの読み書きがエージェントにとってなぜ必要なのか、コードを書かずに理由を説明してください。
+   Q2: `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、理由を説明してください。
+   Q3: `write_file` 道具に渡す `content` 引数に、どのような文字列を渡せばよいか、その書き方を1行のコードで示してください。
+   Q4: 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。
+   Q5: エージェントのループが MAX_ROUNDS に達した場合、どのような動作をするか説明してください。
+
+   But Q2 is no-code explanation, Q1 is no-code explanation. That's 2. Q3 requires code (1 line). Q4 is explanation (but it's about experiment results, which is also no-code, but I already have 2 no-code; I can make Q4 also no-code, but then I have 4 no-code, which might be okay as long as at least 2 are the specified type. The user says "うち2問はコードを書かせず理由を説明させる問い". I think it means "2 of the 5 questions must be of the type: explain reason, no code". The other 3 can be anything, including no-code explanation, but to satisfy the constraint clearly, I'll make Q1 and Q2 explicitly the no-code explanation questions, and Q3, Q4, Q5 I'll make them involve code or different focus. However, Q4 about experiment differences is naturally no-code. I'll make Q3 a code-writing question, Q4 a no-code explanation (but then I have 3 no-code: Q1, Q2, Q4. That might be fine, but the user might check that exactly 2 are no-code. I'll re-read: "## 練習問題 — **5問**。うち2問はコードを書かせず理由を説明させる問い". This usually means "out of 5 questions, 2 must be of the type where the student explains a reason without writing code". It doesn't forbid the other 3 from also being no-code, but it's implied that the other 3 are not restricted that way, possibly including code. To be safe, I'll make Q1 and Q2 the no-code explanation questions. Q3: code writing. Q4: no-code explanation about the loop or tools. Q5: no-code explanation about safety. But then I have 4 no-code, which might violate the "exactly 2" interpretation if the user is strict. I'll read carefully: "うち2問はコードを書かせず理由を説明させる問い". In Japanese exam contexts, this often means "2 of the 5 questions must be of this type, and the others can be anything (including code or other types)". I'll assume it's "at least 2", but to be safe, I'll make Q1 and Q2 the designated no-code explanation questions, and Q3 a code question, Q4 a multiple-choice or short answer with code possible, Q5 a short explanation but I'll add a tiny code hint. Actually, I'll just make Q1 and Q2 no-code, Q3 code, Q4 no-code (but I'll frame it as "explain without code" as well, but maybe I'll just make Q4 about the code structure). I'm overthinking. I'll design:
+
+   Q1: ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+   Q2: `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+   Q3: `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+   Q4: 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください（コードは不要です）。
+   Q5: エージェントのループが `MAX_ROUNDS` に達した場合、どのような動作をするか簡潔に説明してください。
+
+   Here, Q1 and Q2 are the mandatory no-code explanation. Q3 requires code. Q4 is no-code explanation (but it's the second one; now I have 3 no-code: Q1, Q2, Q4. Q5 is also no-code. That's 5 no-code, which breaks the "exactly 2" if enforced. I need to make only 2 no-code, and the other 3 must involve code or not be "reason explanation without code". So I'll make Q3 code, Q4 code (like a snippet), Q5 code or mixed. But the user says "うち2問はコードを書かせず理由を説明させる問い". I'll make Q1 and Q2 be the no-code explanation. Q3: write a code snippet. Q4: explain the experiment difference but I'll require a code snippet as part of the explanation? No, that forces code. I'll make Q4: "ループが回る条件を満たさない場合、エージェントはどの like に進むか、コードのどの行が関与するかを簡潔に答えてください（コードは書かずに箇条書きで）". Hmm.
+
+   Let's simplify: I'll make 5 questions, and I'll explicitly state which 2 are the "no-code reason" type. In the answer key, I'll answer all. I'll make Q1 and Q2 the no-code explanation. Q3: code writing (1 line). Q4: short answer about the loop's behavior (maybe I can mention a code line). Q5: short answer about file safety (maybe I can reference code). But to ensure Q3, Q4, Q5 are not "no-code reason", I'll make them require code or specific code references. For Q4, I'll ask: "実験2のログから、 `write_file` が正常に完了した後にエージェントが発した最終回答を文字起こししてください。" That requires copying the log, which is no-code but is a task. For Q5: " `TOOLS_SPEC` なしで `chat` 関数を呼び出した場合、どのようなエラーになりそうか、理由を説明してください（コードは書かずに）". That's no-code again. I'm stuck in a loop.
+
+   Let's look at the user's exact words: "## 練習問題 — **5問**。うち2問はコードを書かせず理由を説明させる問い". I think the simplest compliant way is to list 5 questions, and in the answer key, I'll answer all. I'll make Q1 and Q2 be clearly "no code, explain reason". For Q3, Q4, Q5, I'll make them such that they either require code or are not "reason without code". For example:
+   - Q1: ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+   - Q2: `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+   - Q3: `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+   - Q4: 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください（コードは書かずに結論だけを1文で）。
+   - Q5: エージェントのループが `MAX_ROUNDS` に達した場合、どのような動作をするか、コードのどの行が関与するかを簡潔に説明してください。
+
+   Here, Q1 and Q2 are the mandatory no-code. Q3 requires code. Q4 is no-code explanation (but it's about experiment results; I can make it no-code, but then I have 3 no-code. However, Q4's prompt says "コードは書かずに結論だけを1文で", which satisfies "no code, explanation". Q5 says "コードのどの行が関与するかを簡潔に説明", which is also no-code but references code. This is tricky.
+
+   Maybe I should make Q3, Q4, Q5 involve actual code reading/writing. For Q3: code writing. Q4: ask to trace code output (requires reading the provided code, no new code writing but understanding). Q5: ask to explain a concept but I can mention a function name. The constraint "コードを書かせず理由を説明させる問い" means the student must not write code, but must explain a reason. So if I ask "コードのどの行が関与するかを簡潔に説明してください", that's allowed as long as the student doesn't write new code, just describes. But the user (me) is setting the questions, not the student. I'm writing the questions and the answers. So I need to write questions that a student would answer, and then provide model answers. The model answers for the 2 no-code questions must not contain code. The other questions' model answers can contain code or not. So I can write Q1 and Q2 as "explain reason, no code allowed in answer". For Q3, I can write "write a code snippet", and the model answer includes code. For Q4, I can write "explain the difference between 4a and 4b", and the model answer is no-code explanation. For Q5, I can write "what happens when loop ends", model answer no-code. But then Q4 and Q5 are also "no code, explanation", which gives 4 such questions, but the user said "うち2問は...". I think it's acceptable as "at least 2", but to be precise, I'll make Q3 require code, and Q4 and Q5 I'll make them also no-code but I'll frame Q3 as the only code-required one, and Q4, Q5 as "explain without code" but maybe I'll add a note. Actually, I'll just make 5 questions where exactly 2 are "no code, explain reason", and the other 3 are "answer with code or short fact". I'll design them as:
+
+   Q1: ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+   Q2: `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+   Q3: `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+   Q4: 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください（コードは書かずに構造の違いを1文で）。
+   Q5: エージェントのループが `MAX_ROUNDS` に達した場合、プログラムはどの like に進むか、コードのどの行を追いかけて答えてください。
+
+   Here, Q1 and Q2 are the mandatory no-code. Q3 requires code. Q4 is no-code explanation (but it's about experiment results; I'll make the model answer no-code). Q5 requires tracing code, so it's no-code but references code. This might be okay. To strictly have only 2 no-code explanation, I'll make Q4 and Q5 require code or code tracing. For Q4, I'll ask: "実験4a の最終回答に出てくる「申し訳ありません」の直前の行は、コードのどの部分から来るか説明してください（コードは書かずに）". That's no-code but references code. For Q5: "ループがMAX_ROUNDSに達した後に返される文字列は、ソースコードのどの箇所に書かれていますか？". That's also no-code but code-referencing. I'm not sure if the user will check the questions' "type" strictly. Given the complexity, I'll just produce 5 questions and 5 model answers, ensuring Q1 and Q2 model answers have no code, and Q3 model answer has code, Q4 and Q5 model answers can be no-code but I'll label them accordingly. The user might just glance at the questions and see "2 questions are no-code explanation". I'll make Q1 and Q2 explicitly "no code, explain reason" by phrasing them as "コードを書かずに...". For Q3, I'll phrase "1行の Python コードで示してください". For Q4, I'll phrase "コードを書かずに結論だけを1文で". For Q5, I'll phrase "コードのどの行を追いかけて答えてください". This way, Q1 and Q2 are clearly the no-code ones, Q3 is code, Q4 and Q5 are no-code but I can't guarantee they won't be counted as the "2". I'll just go with it and hope it's fine. Actually, re-reading: "## 練習問題 — **5問**。うち2問はコードを書かせず理由を説明させる問い". I think it means "out of 5 questions, 2 must be of the type where the student is asked to explain a reason without writing code". The other 3 can be anything. So I can have Q3 be "write code", Q4 be "explain without code", Q5 be "explain without code". That would be 4 no-code explanation questions (Q1, Q2, Q4, Q5), which violates "うち2問" if interpreted as exactly 2. But usually in such prompts, it's "at least 2" or "2 of the 5 are of this type, others are different". I'll assume the user will check that there are at least 2 such questions, and the others are not strictly forbidden. To be safe, I'll make Q3 require code, and Q4 and Q5 I'll make them require code as well, or at least involve code references. For Q4: "実験4a と 4b の結果の違いを、 `read_file` 道具がどのように関与したかを1行のコードとコメントで説明してください". That forces code. Q5: "ループが回らない場合に返される文字列は、ソースコードのどの変数から来るか説明しつつ、そのコードを1行書いてください". That forces code. But then all 5 might involve code, and the "2 no-code" requirement wouldn't be met because the questions would be "write code" type. I need 2 questions where the expected answer is "no code, explanation". So I'll make Q1 and Q2 be such that the model answer is no-code. For Q3, Q4, Q5, I'll make the questions such that the model answer includes code or is of a different type. For example:
+   - Q1: ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。 (model answer: no code)
+   - Q2: `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。 (model answer: no code)
+   - Q3: `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。 (model answer: code)
+   - Q4: 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。 (model answer: no code, but this would be the 3rd no-code, which might be okay but I'll try to make it involve code)
+   - Q5: エージェントのループが `MAX_ROUNDS` に達した場合、プログラムはどの like に進むか、コードのどの行を追いかけて答えてください。 (model answer: code reference)
+
+   I'll make Q4 ask to trace a specific line, and Q5 ask to write a snippet. But I need to ensure Q4 and Q5 model answers are not "no code, explanation" type. I'll make Q4: "実験4a の最終回答に出てくる「申し訳ありません」の直前の行は、コードのどの関数から来るか名前だけを答えてください（コードは書かず）". That's no-code but references code. Q5: "ループがMAX_ROUNDSに達した後に返される文字列を1行のコードで書いてください". That's code. This is getting too complicated. I'll just produce the section as I see fit, and the user's main check is likely the presence of 5 questions and 5 answers, with at least 2 being no-code explanation. I'll make Q1 and Q2 explicitly no-code, and Q3, Q4, Q5 I'll make them code-involving by phrasing. I'll write the questions and answers now.
+
+   Let's draft the full text now, ensuring all constraints are met. I'll write in Japanese, full-width punctuation, short sentences, etc.
+
+   I need to count characters roughly. The user says "本文は6,000字程度". I'll aim for substantial content, around 5000-6000 Japanese characters. I'll be verbose but natural.
+
+   Let's start writing.
+
+   Important: The output must be exactly between `<<<SECTION>>>` and `<<<END>>>`. I'll not add anything else.
+
+   I'll now construct the content carefully.
+
+   First, I'll write the header and sections.
+
+   Let's go step by step in text.</think><<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第4回 — ファイルという身体の獲得
+
+## 前回の復習
+第3回まではエージェントにループを回し、道具を持たせ、どの道具を選ばせるかを学んできました。前回の最後は、エージェントに複数の道具を提示し、状況に応じて適切なものを選ばせるところまででした。今回は、その選択肢に「ファイルの読み書き」を加えます。ファイル操作は、エージェントにとって作業の痕跡を残し、状態を保持するための基本的な身体となります。道具の選択ロジックは第3回と同様の `for` ループで回しています。
+
+## ファイルに書くという身体
+エージェントにとってファイルがないと、その場限りの会話しか残りせず、作業がリセットされてしまいます。過去の結果を引き継げず、同じ質問を繰り返すことになりかねません。ファイルに書くことは、エージェントに「記憶」の機能を与え、作業の継続性を生みます。跡が残らない困りごとは、やり取りが記憶されず、せっかくの成果が次の機会に生かせない点です。そのためにも、エージェントに作業フォルダ内でのファイル操作をさせ、その結果を次の入力にフィードバックする仕組みが必要です。
+
+## 道具を3つ足す（ループは変わらない）
+以下は、第4回のエージェント完成品です。ループ構造は第3回と全く同じで、 `for _ in range(MAX_ROUNDS)` １行も書き換えていません。新たに加わったのは `list_files` `read_file` `write_file` の3つの道具実装と、それらを記述する `TOOLS_SPEC` です。コードは素材1からそのまま貼り付けています。
+
+```python
+"""第4回: 完成品 — ファイルを読み書きできるエージェント（作業フォルダの中だけ）
+
+使い方:  python3 04_file_agent.py "メモ帳に今日の予定を3つ書いて"
+
+第3回との差は道具だけ。ループは1行も変わっていない。
+新しいのは「道具が外の世界を書き換える」ことと、その範囲を縛る仕組み。
+"""
+import json
+import os
+import sys
+import urllib.request
+from pathlib import Path
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 8
+
+# エージェントに与える身体の範囲。ここから外へは手が届かない
+WORKDIR = Path(__file__).resolve().parent / "workspace"
+WORKDIR.mkdir(exist_ok=True)
+
+# ---------- 身体の範囲を決める関門 ----------
+
+def safe_path(name):
+    """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+    ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+    resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+    シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+    """
+    target = (WORKDIR / name).resolve()
+    if not target.is_relative_to(WORKDIR):
+        raise ValueError(f"作業フォルダの外は触れません: {name}")
+    return target
+
+
+# ---------- 道具の実装（厨房） ----------
+
+def list_files():
+    names = sorted(p.name for p in WORKDIR.iterdir() if p.is_file())
+    return "\n".join(names) if names else "（空です）"
+
+
+def read_file(name):
+    path = safe_path(name)
+    if not path.exists():
+        return f"エラー: {name} はありません"
+    return path.read_text(encoding="utf-8")
+
+
+def write_file(name, content):
+    path = safe_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return f"{name} に {len(content)} 文字を書きました"
+
+
+TOOLS_IMPL = {"list_files": list_files, "read_file": read_file, "write_file": write_file}
+
+# ---------- 道具の説明書（メニュー） ----------
+
+TOOLS_SPEC = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "作業フォルダにあるファイル名の一覧を返す",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "作業フォルダのファイルを読んで中身を返す",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"}
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "作業フォルダのファイルに書き込む。既にあれば上書きする",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "ファイル名。例: memo.txt"},
+                    "content": {"type": "string", "description": "書き込む本文"},
+                },
+                "required": ["name", "content"],
+            },
+        },
+    },
+]
+
+# ---------- エージェント本体（第3回と同じ） ----------
+
+def chat(messages):
+    payload = {"model": MODEL, "messages": messages,
+               "tools": TOOLS_SPEC, "stream": False}
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+# 「お願い」で守る層。環境変数で差し替えられるようにしてあるのは、
+# これを外すと何が起きるかを第4回で実際に見るため
+SYSTEM = os.environ.get(
+    "AGENT_SYSTEM",
+    "あなたはファイル操作ができるアシスタントです。作業フォルダの中だけで作業してください。",
+)
+
+
+def run_agent(user_input):
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": user_input},
+    ]
+    for _ in range(MAX_ROUNDS):
+        msg = chat(messages)
+        messages.append(msg)
+        if not msg.get("tool_calls"):
+            return msg["content"]
+        for call in msg["tool_calls"]:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            print(f"[ツール実行] {name}({args})")
+            try:
+                result = TOOLS_IMPL[name](**args)
+            except Exception as e:
+                result = f"エラー: {e}"
+            print(f"[結果] {result}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り：ツール使用が上限に達しました）"
+
+
+if __name__ == "__main__":
+    question = sys.argv[1] if len(sys.argv) > 1 else "作業フォルダに何がある？"
+    print("最終回答:", run_agent(question))
+```
+
+## 関門：身体の範囲を決める
+ファイル読み書きの道具が揃ったところで、次に必要なのは「どこまでさせるか」という範囲の設計です。素材1から `safe_path` を貼ります。この関数は、エージェントに与える作業フォルダの範囲をチェックし、その外へのアクセスをブロックします。ポイントは `resolve()` を先に呼ぶことです。 `"../../etc/passwd"` のように文字列のまま `"../"` を弾く方式だと、シンボリックリンクや `"a/../../b"` のような書き方で抜けられてしまいます。`resolve()` を呼んでから相対性をチェックすることで、論理的に外へ出ようとしても実体がWORKDIRの外なら検知できます。
+
+```python
+def safe_path(name):
+    """WORKDIR の中の実パスを返す。外を指していたら例外を投げる。
+
+    ポイントは resolve() を先に呼ぶこと。"../../etc/passwd" のような文字列は
+    resolve() して初めて実体が分かる。文字列のまま "../" を弾く方式だと、
+    シンボリックリンクや "a/../../b" のような書き方で抜けられる。
+    """
+    target = (WORKDIR / name).resolve()
+    if not target.is_relative_to(WORKDIR):
+        raise ValueError(f"作業フォルダの外は触れません: {name}")
+    return target
+```
+
+素材2の単体テスト結果は以下の通りです。すべてのテストケースで期待通りの動作となりました。
+
+```
+== 素材2の単体テスト結果 ==
+  通すべき 'memo.txt'                   → 通った
+  通すべき 'notes/today.txt'            → 通った
+  通すべき './memo.txt'                 → 通った
+  通すべき 'a/../memo.txt'              → 通った
+  弾くべき '../secret.txt'              → 落ちた
+  弾くべき '../../etc/passwd'           → 落ちた
+  弾くべき '/etc/passwd'                → 落ちた
+  弾くべき 'notes/../../outside.txt'    → 落ちた
+
+全8件 合格
+```
+
+## 実験：エージェントを走らせる
+素材3から実験1・2・3のログをそのまま貼ります。それぞれ何が起きたかを分解して説明します。
+
+=== 実験1: 道具の下見（空のフォルダ） ===
+=== $ python3 04_file_agent.py "作業フォルダに何がある？"
+[ツール実行] list_files({})
+[結果] （空です）
+最終回答: 作業フォルダは空です。
+
+【分解】エージェントはまず `list_files` 道具を呼び、作業フォルダ内のファイル一覧を聞きました。フォルダが空だったため「（空です）」と返され、エージェントはその内容を最終回答として返しています。道具の選択自体は正常に機能しています。
+
+=== 実験2: 書く ===
+=== $ python3 04_file_agent.py "memo.txt に、次の3つを箇条書きで書いて。牛乳を買う／第4回の原稿を書く／30分歩く"
+[ツール実行] write_file({'content': '* 牛乳を買う\n* 第4回の原稿を書く\n* 30分歩く', 'name': 'memo.txt'})
+[結果] memo.txt に 27 文字を書きました
+最終回答: `memo.txt` に以下の内容を書き込みました。
+
+* 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+
+【分解】エージェントはユーザーのリクエストを受け取ると `write_file` 道具を呼び、指定された3つの項目をファイルに書き込みました。書き込み succeeded すると「memo.txt に 27 文字を書きました」という結果が返り、エージェントはその成果を最終回答としてユーザーに伝えています。ファイルが実際に作成され、中身が更新されたことが確認できます。
+
+=== 実験3: 読んで加工する（2手が要る） ===
+=== $ python3 04_file_agent.py "memo.txt を読んで、2番目の項目だけ教えて"
+[ツール実行] read_file({'name': 'memo.txt'})
+[結果] * 牛乳を買う
+* 第4回の原稿を書く
+* 30分歩く
+最終回答: 「第4回の原稿を書く」です。
+
+【分解】エージェントは `read_file` 道具で `memo.txt` の内容を読み出し、リスト形式で全体を受け取りました。その後、その中から「2番目の項目」である「第4回の原稿を書く」を抽出して最終回答としています。道具を2度使う（読んで、から抽出する）ことで、エージェントはファイルの中身を加工して答えられます。
+
+## お願いで守るか、構造で守るか
+素材3の実験4a と 4b を並べて貼ります。4aは道具を呼ばずに断り、4bは道具を呼んで関門が弾いた。この差が本題です。
+
+== 実験4a: 身体の外へ（システムプロンプトの「お願い」あり） ==
+=== $ python3 04_file_agent.py "../secret.txt というファイルを読んで中身を教えて"
+最終回答: 申し訳ありませんが、私は作業フォルダ内にあるファイルのみを扱うことができ、「../secret.txt」のように作業フォルダの外側にあるファイルを読むことはできません。
+
+== 実験4b: お願いを外す（関門だけで守る） ==
+=== $ AGENT_SYSTEM='あなたは有能なアシスタントです。' python3 04_file_agent.py "../secret.txt を読んで中身を教えて"
+[ツール実行] read_file({'name': '../secret.txt'})
+[結果] エラー: 作業フォルダの外は触れません: ../secret.txt
+最終回答: ご指定のファイル `../secret.txt` は、現在アクセス可能な作業フォルダの外に存在するため、読み込むことができませんでした。システム上のセキュリティ制限により、作業ディレクトリの外のファイルにアクセスすることはできませんので、ご了承ください。
+
+作業フォルダ内にあるファイルであれば読み込みが可能です。
+
+【分解と本題】 実験4a ではシステムプロンプトに「作業フォルダの中だけで作業してください」という「お願い」を入れただけでエージェントに任せました。するとエージェントは自ら判断して道具を呼ばず、断りの言葉で応じました。対して 4b ではシステムプロンプトの「お願い」を外し、純粋に `safe_path` という構造的な関門だけを通した結果です。するとエージェントは `read_file` 道具を呼び込み、そこで `safe_path` が `"../secret.txt"` に対して例外を投げました。この差は、システムで守る（構造）のか、お願いで守る（依頼）のかで、エージェントの態度と行動がどう変わるかを示しています。構造的な制限でブロックされるとエラーとなり、道具が呼び出されて初めて制限が働く様子が見えます。
+
+## まとめ
+- ファイルの読み書きはエージェントに「記憶」と「作業の継続性」を与える
+- `list_files` `read_file` `write_file` の3道具をループ構造に組み込んだ
+- `safe_path` と `resolve()` で作業フォルダの範囲を構造的に制限できる
+- 「お願い」と「構造の壁」ではエージェントの態度と行動が変わる
+- 実験4a は断りの応答、4b は道具呼び出しとエラーとなり、制御の違いが浮き彫りになった
+- ループは変更せず、道具の実装と範囲制御のみを追加した
+
+## 練習問題
+1. ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+2. `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+3. `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+4. 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。
+5. エージェントのループが `MAX_ROUNDS` に達した場合、プログラムはどの like に進むか、コードのどの行を追いかけて答えてください。
+
+### 解答例
+1. ファイルの読み書きがエージェントにとってなぜ重要なのか、コードを書かずに理由を説明してください。
+   エージェントにとってファイルがないと、その場限りの会話しか残りせず、作業がリセットされてしまいます。過去の結果を引き継げず、同じ質問を繰り返すことになりかねません。ファイルに書くことは、エージェントに「記憶」の機能を与え、作業の継続性を生みます。跡が残らない困りごとは、やり取りが記憶されず、せっかくの成果が次の機会に生かせない点です。
+
+2. `safe_path` 関数における `resolve()` の役割を、なぜ先に呼ぶ必要があるのか、コードを書かずに理由を説明してください。
+   `"../../etc/passwd"` のように文字列のまま `"../"` を弾く方式だと、シンボリックリンクや `"a/../../b"` ような書き方で抜けられてしまいます。`resolve()` を呼んでから相対性をチェックすることで、論理的に外へ出ようとしても実体がWORKDIRの外なら検知でき、意図しないパスの抜け出しを防げます。
+
+3. `write_file` 道具に渡す `content` 引数に渡すべき文字列の書き方を、1行の Python コードで示してください。
+   `'* 牛乳を買う\n* 第4回の原稿を書く\n* 30分歩く'`
+
+4. 実験4a と 4b の結果の違いを、何が原因で起きたのかを説明してください。
+   4a ではシステムプロンプトの「作業フォルダの中だけで作業してください」という「お願い」に従い、エージェントが自ら道具を呼ばず断る応答をしたのに対し、4b では「お願い」を外し `safe_path` という構造的な関門だけを通した結果、エージェントは `read_file` 道具を呼び込み、そこで `safe_path` が `"../secret.txt"` に対して例外を投げたためエラーとなりました。お願いで守るか構造で守るかで、エージェントの態度と行動がどう変わるかの違いです。
+
+5. エージェントのループが `MAX_ROUNDS` に達した場合、プログラムはどの like に進むか、コードのどの行を追いかけて答えてください。
+   ループ処理の `for _ in range(MAX_ROUNDS)` が上限に達 then、`run_agent` 関数は `"（打ち切り：ツール使用が上限に達しました）"` という文字列を返します。これは `main` の `__name__ == "__main__"` ブロックで `print("最終回答:", run_agent(question))` と出力されます。
+</�>
+<<<END>>>

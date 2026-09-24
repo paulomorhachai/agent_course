@@ -1,0 +1,16 @@
+{
+ "label": "nemotron_mlx_v2",
+ "repo": "mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit",
+ "think": false,
+ "max_tokens": 16000,
+ "temp": 0.6,
+ "prompt_chars": 9084,
+ "prompt_tokens": 4193,
+ "raw_chars": 2954,
+ "section_chars": 2940,
+ "out_tokens": 2020,
+ "sec": 21.3,
+ "tok_per_sec": 95.1,
+ "budget_exhausted": false,
+ "markers_found": true
+}

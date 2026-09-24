@@ -1,0 +1,263 @@
+あなたは、プログラミング教材の書き手です。
+「LLMエージェント自作講座」（全12回・日本語・Note公開）の**第9回**の本文を書いてください。
+
+## 講座の性格
+
+- 読者は Python を書ける初学者。フレームワークは使わず、標準ライブラリだけで組む
+- 毎回、実際に手元のローカルモデル（gemma4:e4b）を走らせて、その挙動を観察する
+- 第1回=whileループ、第2回=道具を持たせる、第3回=道具を選ばせる、
+  第4回=ファイルという身体（読み書きと作業フォルダの関門）、まで済んでいる
+- 第9回のテーマは「計画と分解」
+
+## 構成（この順で、この見出しで書く。各節に何を入れるかも守る）
+
+- `## 前回の復習` — 第8回までを3〜4文で
+- `## 行き当たりばったりの限界` — 手数が増えると迷子になる困りごとから入る
+- `## ReAct：考えてから動く型` — **素材1から `react_step` を貼る**
+- `## 計画係と実行係に分ける` — **素材1から `plan` `execute` を貼る**
+- `## 実験：分けると何が変わるか` — **素材2のログをそのまま貼り**、
+  素のループと計画ありを並べて比べる
+- `## まとめ` — 箇条書き4〜6項目
+- `## 練習問題` — **5問**。うち2問はコードを書かせず理由を説明させる問い
+- `### 解答例` — 5問すべてに答える
+
+
+## 分量とコードの扱い
+
+- 本文は**6,000字程度**。各節を1段落で済ませない
+- コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。
+  長い部分は関係する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする
+
+## 絶対の禁止
+
+**実行結果を自分で書かないこと。** 下に渡した実測ログに無い出力・エラー文・
+モデルの回答を、本文に書いてはいけません。ログを引用するときは渡されたものを
+そのまま使い、そこで何が起きたかの説明を足してください。
+渡していない実験を「やってみました」と書くのも禁止です。
+
+## 文体（守ること）
+
+- 句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）
+- 一文は60字を目安、長くても100字まで。接続を重ねない
+- 英単語を地の文に生で混ぜない。訳語かカタカナにする
+  （例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）
+- 敬体（です・ます）で統一する。同じ文末を3回続けない
+- 各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない
+- コードを見せたら、それが何をしているかを日常語で1文添える
+- 数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）
+- 根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない
+- 節を「重要です」で締めない。何がどう重要かを書く
+- **「素材1」「素材2」という言葉を本文に書かない。**読者はこの指示書を読んでいない
+
+## 素材1: 本文に載せるコード（`code/09_plan.py`。この通りに引用すること）
+```python
+"""第9回: 完成品 — 考えてから動く、そして分ける
+
+使い方:  python3 09_plan.py            （素のループ／ReAct／計画分離を並べて比べる）
+
+手数が2手までなら、その場の判断で足りた。増えると迷子になる。
+迷子の直し方は2つある。一手ごとに考えさせる（ReAct）か、先に段取りを立てさせる（計画分離）か。
+"""
+import ast
+import datetime
+import json
+import operator
+import re
+import sys
+import urllib.request
+
+MODEL = "gemma4:e4b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MAX_ROUNDS = 8
+
+OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+       ast.Div: operator.truediv, ast.Pow: operator.pow, ast.USub: operator.neg}
+
+
+def calc(expression):
+    def ev(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in OPS:
+            return OPS[type(node.op)](ev(node.left), ev(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in OPS:
+            return OPS[type(node.op)](ev(node.operand))
+        raise ValueError("数値と + - * / ** 以外は使えません")
+    return ev(ast.parse(expression, mode="eval").body)
+
+
+def now():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+TOOLS_IMPL = {"calc": calc, "now": now}
+
+TOOLS_SPEC = [
+    {"type": "function", "function": {
+        "name": "calc", "description": "数式を計算して正確な答えを返す電卓",
+        "parameters": {"type": "object", "properties": {
+            "expression": {"type": "string", "description": "例: 12*(3+4)"}},
+            "required": ["expression"]}}},
+    {"type": "function", "function": {
+        "name": "now", "description": "現在の日時を返す",
+        "parameters": {"type": "object", "properties": {}}}},
+]
+
+
+def chat(messages, tools=TOOLS_SPEC):
+    payload = {"model": MODEL, "messages": messages, "stream": False}
+    if tools:
+        payload["tools"] = tools
+    req = urllib.request.Request(
+        OLLAMA_URL, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)["message"]
+
+
+def _loop(messages, label):
+    """道具ループの共通部分。周回数と道具の呼び出し列を返す。"""
+    used = []
+    for i in range(1, MAX_ROUNDS + 1):
+        msg = chat(messages)
+        messages.append(msg)
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return msg.get("content", ""), used, i
+        for call in calls:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            try:
+                result = TOOLS_IMPL[name](**args)
+            except Exception as e:
+                result = f"エラー: {e}"
+            used.append(f"{name}({args})")
+            print(f"  [{label}] {name}({args}) → {str(result)[:40]}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り）", used, MAX_ROUNDS
+
+
+# ---------- 型1: 素のループ（第3回のまま） ----------
+
+def plain(question):
+    return _loop([
+        {"role": "system", "content": "あなたは正確さを重視するアシスタントです。"},
+        {"role": "user", "content": question}], "素")
+
+
+# ---------- 型2: ReAct — 一手ごとに考えさせる ----------
+
+REACT_SYSTEM = """あなたは正確さを重視するアシスタントです。
+道具を呼ぶ前に、必ず1文で「いま何のためにどの道具を使うか」を書いてください。
+書いてから呼びます。書かずに呼ばないでください。"""
+
+
+def react_step(question):
+    """考えを口に出させてから動かす。出させること自体が手綱になる。"""
+    return _loop([
+        {"role": "system", "content": REACT_SYSTEM},
+        {"role": "user", "content": question}], "ReAct")
+
+
+# ---------- 型3: 計画係と実行係に分ける ----------
+
+def plan(question):
+    """道具を持たせずに段取りだけ書かせる。持たせないので手が出ない。"""
+    msg = chat([
+        {"role": "system", "content":
+         "あなたは段取りを立てる係です。道具は使えません。"
+         "使える道具は calc（電卓）と now（現在時刻）の2つです。"
+         "解くための手順を、1行に1手ずつ、3手以内の番号付きで書いてください。"},
+        {"role": "user", "content": question},
+    ], tools=None)
+    steps = [ln.strip() for ln in msg["content"].splitlines()
+             if re.match(r"^\s*\d[\.\)]", ln)]
+    return steps or [msg["content"].strip()]
+
+
+def execute(question, steps):
+    """段取りを渡して実行させる。考える仕事は済んでいる。"""
+    plan_text = "\n".join(steps)
+    return _loop([
+        {"role": "system", "content":
+         "あなたは実行係です。次の段取りに従って道具を呼び、最後に答えを出してください。\n"
+         + plan_text},
+        {"role": "user", "content": question}], "実行")
+
+
+QUESTION = "今の時刻の「時」と「分」を足して、その結果を3乗するといくつ？"
+
+
+def main():
+    print(f"問い: {QUESTION}\n")
+
+    print("--- 型1: 素のループ")
+    ans, used, rounds = plain(QUESTION)
+    print(f"  答え: {ans[:80]}")
+    print(f"  道具 {len(used)}回 / {rounds}周\n")
+
+    print("--- 型2: ReAct（一手ごとに考えさせる）")
+    ans, used, rounds = react_step(QUESTION)
+    print(f"  答え: {ans[:80]}")
+    print(f"  道具 {len(used)}回 / {rounds}周\n")
+
+    print("--- 型3: 計画係と実行係に分ける")
+    steps = plan(QUESTION)
+    print("  立てた段取り:")
+    for s in steps:
+        print(f"    {s}")
+    ans, used, rounds = execute(QUESTION, steps)
+    print(f"  答え: {ans[:80]}")
+    print(f"  道具 {len(used)}回 / {rounds}周")
+
+
+if __name__ == "__main__":
+    main()
+```
+## 素材2: 実測ログ（これが唯一の実行結果。ここに無いものは書かない）
+```
+=== $ python3 09_plan.py
+問い: 今の時刻の「時」と「分」を足して、その結果を3乗するといくつ？
+
+--- 型1: 素のループ
+  [素] now({}) → 2026-08-21 00:31:32
+  [素] calc({'expression': '(0+31)^3'}) → エラー: 数値と + - * / ** 以外は使えません
+  [素] calc({'expression': '31*31*31'}) → 29791
+  答え: 現在の時刻は「0時31分」です。
+
+「時」と「分」を足すと、 $0 + 31 = 31$ となります。
+
+この結果を3乗すると、
+$31^3 = 29,791$
+  道具 3回 / 4周
+
+--- 型2: ReAct（一手ごとに考えさせる）
+  [ReAct] now({}) → 2026-08-21 00:31:44
+  [ReAct] calc({'expression': '31^3'}) → エラー: 数値と + - * / ** 以外は使えません
+  答え: 現在の時刻は「時」と「分」を足し、その結果を3乗します。
+
+1.  **現在の時刻の取得:**
+    `now`ツールにより、現在時刻は「00時31分」である
+  道具 2回 / 3周
+
+--- 型3: 計画係と実行係に分ける
+  立てた段取り:
+    1. `now()`
+    2. `calc((now().getHour() + now().getMinute()))`
+    3. `calc((result_of_step_2) ** 3)`
+  [実行] now({}) → 2026-08-21 00:32:02
+  [実行] calc({'expression': '0 + 32'}) → 32
+  [実行] calc({'expression': '32 ** 3'}) → 32768
+  答え: 32768
+  道具 3回 / 4周
+```
+## 出力の形式
+
+**下書きを書かないでください。** 1文字目を <<<SECTION>>> にし、最後に <<<END>>> を置きます。
+この2つのマーカーの間だけが提出物です。
+
+<<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第9回 — （続きを書く）
+
+（ここに本文をMarkdownで。上の構成の見出しを順に）
+<<<END>>>

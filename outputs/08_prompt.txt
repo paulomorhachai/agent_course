@@ -1,0 +1,238 @@
+あなたは、プログラミング教材の書き手です。
+「LLMエージェント自作講座」（全12回・日本語・Note公開）の**第8回**の本文を書いてください。
+
+## 講座の性格
+
+- 読者は Python を書ける初学者。フレームワークは使わず、標準ライブラリだけで組む
+- 毎回、実際に手元のローカルモデル（gemma4:e4b）を走らせて、その挙動を観察する
+- 第1回=whileループ、第2回=道具を持たせる、第3回=道具を選ばせる、
+  第4回=ファイルという身体（読み書きと作業フォルダの関門）、まで済んでいる
+- 第8回のテーマは「検索する記憶」
+
+## 構成（この順で、この見出しで書く。各節に何を入れるかも守る）
+
+- `## 前回の復習` — 第7回までを3〜4文で
+- `## 全部は入らない、だから探す` — 長期記憶が増えたときの困りごとから入る
+- `## 埋め込みという物差し` — **素材1から `embed` `cosine` を貼る**。
+  意味の近さを数で測るとはどういうことかを日常語で説明
+- `## 100行の素朴な検索` — **素材1から `search` と道具への接続を貼る**
+- `## 実験：探して答える` — **素材2のログをそのまま貼り**、1件ずつ分解する
+- `## この作りの限界` — 実測で見えた失敗だけを根拠に書く
+- `## まとめ` — 箇条書き4〜6項目
+- `## 練習問題` — **5問**。うち2問はコードを書かせず理由を説明させる問い
+- `### 解答例` — 5問すべてに答える
+
+
+## 分量とコードの扱い
+
+- 本文は**6,000字程度**。各節を1段落で済ませない
+- コードは**素材からそのまま貼る**。書き直したり、擬似コードにしたりしない。
+  長い部分は関係する関数だけ抜き出してよいが、抜き出した行は素材と一字一句同じにする
+
+## 絶対の禁止
+
+**実行結果を自分で書かないこと。** 下に渡した実測ログに無い出力・エラー文・
+モデルの回答を、本文に書いてはいけません。ログを引用するときは渡されたものを
+そのまま使い、そこで何が起きたかの説明を足してください。
+渡していない実験を「やってみました」と書くのも禁止です。
+
+## 文体（守ること）
+
+- 句読点は全角の「、」「。」。半角の , . を地の文に使わない（コード内は別）
+- 一文は60字を目安、長くても100字まで。接続を重ねない
+- 英単語を地の文に生で混ぜない。訳語かカタカナにする
+  （例外: Python, Ollama などの固有名詞、コード中の識別子、LLM/API/JSON などの略語）
+- 敬体（です・ます）で統一する。同じ文末を3回続けない
+- 各節は「この仕組みが無いと何に困るか」を1〜2文書いてから説明に入る。定義から始めない
+- コードを見せたら、それが何をしているかを日常語で1文添える
+- 数え上げた対象は全部見せる（「道具は3つ」と書くなら3つとも示す）
+- 根拠のない数値の閾値を書かない。「〜と言われています」で根拠を省略しない
+- 節を「重要です」で締めない。何がどう重要かを書く
+- **「素材1」「素材2」という言葉を本文に書かない。**読者はこの指示書を読んでいない
+
+## 素材1: 本文に載せるコード（`code/08_rag.py`。この通りに引用すること）
+```python
+"""第8回: 完成品 — 意味で探す記憶（素朴なRAGを標準ライブラリだけで）
+
+使い方:  python3 08_rag.py            （検索の実験）
+         python3 08_rag.py "猫の名前は？"   （探してから答えさせる）
+
+第7回の recall は文字が一致しないと引けなかった。
+「住まい」で引きたいのに記憶には「札幌」としか書いていない、という取りこぼしが起きる。
+意味の近さを数で測れば、その溝を越えられる。
+"""
+import json
+import math
+import sys
+import urllib.request
+
+CHAT_MODEL = "gemma4:e4b"
+EMBED_MODEL = "bge-m3"
+OLLAMA = "http://localhost:11434"
+
+# 記憶の代わりの小さな知識。実際は第7回の memory.md を1行ずつ入れればよい
+NOTES = [
+    "飼っている猫の名前はミケで、三毛猫の雌です。",
+    "住まいは札幌で、冬は雪かきに追われます。",
+    "先週、書店で小説を3冊買いました。",
+    "夕食にカレーを作るときは、隠し味に珈琲を少し入れます。",
+    "自転車の後輪がパンクしたので、来週修理に出す予定です。",
+    "会社の締め切りは毎月20日です。",
+]
+
+
+def post(path, payload):
+    req = urllib.request.Request(
+        OLLAMA + path, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as res:
+        return json.load(res)
+
+
+# ---------- 埋め込みと距離 ----------
+
+def embed(text):
+    """文を数のベクトルに変える。近い意味の文は近い方向を向く。"""
+    return post("/api/embeddings", {"model": EMBED_MODEL, "prompt": text})["embedding"]
+
+
+def cosine(a, b):
+    """2つの向きがどれだけ揃っているか。1に近いほど同じ方向を向いている。
+
+    長さを割り落として向きだけを見るので、文の長短に振り回されない。
+    """
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+# ---------- 探す ----------
+
+INDEX = []  # (本文, ベクトル) の並び。件数が少ないので総当たりでよい
+
+
+def build_index(notes=NOTES):
+    INDEX.clear()
+    for text in notes:
+        INDEX.append((text, embed(text)))
+    return len(INDEX)
+
+
+def search(query, k=2):
+    """問いに近い順に k 件返す。総当たりで全件と比べるだけ。"""
+    qv = embed(query)
+    scored = [(cosine(qv, v), text) for text, v in INDEX]
+    scored.sort(reverse=True)
+    return scored[:k]
+
+
+# ---------- 道具として繋ぐ ----------
+
+def recall_tool(query):
+    hits = search(query, k=2)
+    return "\n".join(f"（近さ {s:.3f}）{t}" for s, t in hits)
+
+
+TOOLS_IMPL = {"recall": recall_tool}
+
+TOOLS_SPEC = [{
+    "type": "function",
+    "function": {
+        "name": "recall",
+        "description": "自分の記憶から、質問に関係のある事柄を探して返す",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "探したい内容"}},
+            "required": ["query"]}},
+}]
+
+
+def run_agent(question):
+    messages = [
+        {"role": "system", "content":
+         "あなたはユーザー本人の記憶を預かるアシスタントです。"
+         "答える前に必ず recall で記憶を探してください。"},
+        {"role": "user", "content": question},
+    ]
+    for _ in range(4):
+        payload = {"model": CHAT_MODEL, "messages": messages,
+                   "tools": TOOLS_SPEC, "stream": False}
+        msg = post("/api/chat", payload)["message"]
+        messages.append(msg)
+        if not msg.get("tool_calls"):
+            return msg["content"]
+        for call in msg["tool_calls"]:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+            print(f"[ツール実行] {name}({args})")
+            result = TOOLS_IMPL[name](**args)
+            print(f"[結果] {result}")
+            messages.append({"role": "tool", "tool_name": name, "content": str(result)})
+    return "（打ち切り）"
+
+
+QUERIES = [
+    ("住んでいる場所", "文字は一致しないが意味は近い"),
+    ("ペット", "「猫」とも「ミケ」とも書いていない"),
+    ("読書", "「書店」「小説」に届くか"),
+    ("パンク", "文字が一致する素直な例"),
+    ("量子力学", "記憶に無い話題。それでも何かは返る"),
+]
+
+
+def experiment():
+    n = build_index()
+    print(f"記憶 {n} 件を埋め込みました（{EMBED_MODEL}、次元 {len(INDEX[0][1])}）")
+    for q, why in QUERIES:
+        print(f"--- 問い: {q}  （{why}）")
+        for s, t in search(q, k=2):
+            print(f"  {s:.3f}  {t}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        build_index()
+        print("最終回答:", run_agent(sys.argv[1]))
+    else:
+        experiment()
+```
+## 素材2: 実測ログ（これが唯一の実行結果。ここに無いものは書かない）
+```
+== 実験A: 意味で探す ==
+=== $ python3 08_rag.py
+記憶 6 件を埋め込みました（bge-m3、次元 1024）
+--- 問い: 住んでいる場所  （文字は一致しないが意味は近い）
+  0.627  住まいは札幌で、冬は雪かきに追われます。
+  0.544  飼っている猫の名前はミケで、三毛猫の雌です。
+--- 問い: ペット  （「猫」とも「ミケ」とも書いていない）
+  0.498  飼っている猫の名前はミケで、三毛猫の雌です。
+  0.423  住まいは札幌で、冬は雪かきに追われます。
+--- 問い: 読書  （「書店」「小説」に届くか）
+  0.629  先週、書店で小説を3冊買いました。
+  0.438  住まいは札幌で、冬は雪かきに追われます。
+--- 問い: パンク  （文字が一致する素直な例）
+  0.488  自転車の後輪がパンクしたので、来週修理に出す予定です。
+  0.338  先週、書店で小説を3冊買いました。
+--- 問い: 量子力学  （記憶に無い話題。それでも何かは返る）
+  0.308  自転車の後輪がパンクしたので、来週修理に出す予定です。
+  0.293  先週、書店で小説を3冊買いました。
+
+== 実験B: 道具として使わせる ==
+=== $ python3 08_rag.py "私はどこに住んでいますか？"
+[ツール実行] recall({'query': '居住地'})
+[結果] （近さ 0.589）住まいは札幌で、冬は雪かきに追われます。
+（近さ 0.488）飼っている猫の名前はミケで、三毛猫の雌です。
+最終回答: 記憶を探しました。お話しいただいた記憶によると、お住まいは**札幌**さんです。
+
+（冬は雪かきが大変とのことですね。）
+```
+## 出力の形式
+
+**下書きを書かないでください。** 1文字目を <<<SECTION>>> にし、最後に <<<END>>> を置きます。
+この2つのマーカーの間だけが提出物です。
+
+<<<SECTION>>>
+# タイトル案：LLMエージェント自作講座 第8回 — （続きを書く）
+
+（ここに本文をMarkdownで。上の構成の見出しを順に）
+<<<END>>>
